@@ -1,0 +1,36 @@
+[build-system]
+requires = [
+    "setuptools==82.0.1",
+    "wheel==0.47.0"
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "algotraders"
+dynamic = ["version"]
+description = "Unified Algorithimic Tradng using Broker's API"
+readme = {file = "README.md", content-type = "text/markdown"}
+requires-python = ">=3.12"
+license = {file = "LICENSE" }
+
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)"
+]
+
+dependencies = []
+
+[tool.setuptools]
+py-modules = []
+
+[tool.setuptools.packages.find]
+exclude = ["tests*", "examples*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "algotraders.__version__"}
