@@ -38,7 +38,7 @@ jobs:
 
     environment:
       name: PyPI Release
-      url: https://pypi.org/p/alotraders
+      url: https://pypi.org/p/algotraders
 
     steps:
       - name: Retrieve Release Distributions
