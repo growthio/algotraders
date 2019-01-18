@@ -10,3 +10,10 @@ different strategies. The ``brokers`` are connected using an abstract
 base class that provides unified functions.
 """
 
+from algotraders.brokers.registry import (
+    registerBroker, availableBrokers, getBrokerInterface
+)
+
+__all__ = [
+    "registerBroker", "availableBrokers", "getBrokerInterface"
+]
