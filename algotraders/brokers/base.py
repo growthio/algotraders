@@ -18,7 +18,7 @@ import asyncio
 import tracemalloc
 
 from abc import ABC, abstractmethod
-from typing import Optional, Iterable
+from typing import Optional, Iterable, List
 
 class BaseBrokerAPI(ABC):
     """
@@ -244,6 +244,17 @@ class BaseBrokerAPI(ABC):
         limits) before delegating to the concrete API call. These rules
         must be developed in the strategies and from where the order
         is placed, and then the function should be called.
+        """
+
+        pass
+
+
+    @abstractmethod
+    def getPositions(self) -> List[dict]:
+        """
+        Get the current position from the DEMAT account. The value can
+        be used to determine the next steps of action or to provide
+        guard to maximum allowed stop loss for the day, etc.
         """
 
         pass
