@@ -9,9 +9,10 @@ towards providing zero-cost trading APIs for retail traders. The
 API can be used to fetch historical data, and execute buy/sell orders
 of securities using a FYERS DEMAT account.
 
-..versionchanged:: 2021-08-20 FYERS API v2 was released, deprecating
-    old builds and logic. For more information please check the API
-    documentation for additional details.
+..versionchanged:: 2021-08-20 FYERS API v2 was Released:
+    The version release was done before any implementation of v1 logic
+    into our broker services. The details are documented as a process
+    note, and no changes are yet made.
 """
 
 from typing import Optional, Iterable
@@ -42,8 +43,13 @@ class FyersAPI(BaseBrokerAPI):
         Name of the broker for which the concrete method is defined,
         and can be used for logging and/or auditing purpose.
 
-        ..versionchanged:: 2021-08-20 Adding API version number to the
-            broker name as the older services needs to be migrated.
+        ..versionchanged:: 2021-08-20 Added API Version Number:
+            FYERS API v2 is a major change with underlying library and
+            other module changes. To reflect this changes, we've
+            decided to add the version number to the property to let
+            the end user know which services are being used. Check
+            `blog <https://fyers.in/community/blogs-gdppin8d/post/introducing-my-api-f8nksVTo2uprJcD>`_
+            for more information.
         """
 
         return "FYERS API v2"
