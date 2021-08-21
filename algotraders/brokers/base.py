@@ -15,10 +15,76 @@ queued in the system when resource is available.
 
 import math
 import asyncio
+import inspect
 import tracemalloc
 
+from functools import wraps
 from abc import ABC, abstractmethod
-from typing import Optional, Iterable
+from typing import Any, Callable, Optional, Iterable, List
+
+from algotraders.errors import NotConnectedError
+
+def requireLogin(func : Callable[..., Any]) -> Callable[..., Any]:
+    """
+    A decorator defined to wrap methods which requires a login, else
+    raises an ``NotConnectedError`` when the method was not called or
+    logout method was invoked in the script.
+
+    .. code-block:: python
+
+        class NewBrokerAPI(BaseBrokerAPI):
+            ...
+
+            def login(...) -> ...:
+                ...
+                self.status = True
+
+
+            def logout(...) -> ...:
+                ...
+                self.status = False
+
+            @requireLogin
+            async def fetchData(...)-> Iterable:
+                ...
+
+            @requireLogin
+            def getPositions(...) -> List[dict]:
+                ...
+
+    The decorator function checks if the underlying callable is an
+    asynchronous function, else calls the regular method.
+    """
+
+    useAsync = inspect.iscoroutinefunction(func)
+
+    if useAsync:
+        @wraps(func)
+        async def asyncWrapper(self : "BaseBrokerAPI", *args, **kwargs) -> Any:
+            status = getattr(self, "status", False)
+
+            if not status:
+                raise NotConnectedError(
+                    f"Cannot call '{func.__name__}()', either login() "
+                    "was not called, or logout() has been called."
+                )
+            
+            return await func(*args, **kwargs)
+        return asyncWrapper
+
+    @wraps(func)
+    def syncWrapper(self : "BaseBrokerAPI", *args, **kwargs) -> Any:
+        status = getattr(self, "status", False)
+
+        if not status:
+            raise NotConnectedError(
+                f"Cannot call '{func.__name__}()', either login() "
+                "was not called, or logout() has been called."
+            )
+        
+        return func(*args, **kwargs)
+    return syncWrapper
+
 
 class BaseBrokerAPI(ABC):
     """
@@ -37,6 +103,7 @@ class BaseBrokerAPI(ABC):
     """
 
     def __init__(self, maxConcurrent : int) -> None:
+        self.status = False
         self.semaphore = asyncio.Semaphore(maxConcurrent)
 
 
@@ -244,6 +311,17 @@ class BaseBrokerAPI(ABC):
         limits) before delegating to the concrete API call. These rules
         must be developed in the strategies and from where the order
         is placed, and then the function should be called.
+        """
+
+        pass
+
+
+    @abstractmethod
+    def getPositions(self) -> List[dict]:
+        """
+        Get the current position from the DEMAT account. The value can
+        be used to determine the next steps of action or to provide
+        guard to maximum allowed stop loss for the day, etc.
         """
 
         pass
