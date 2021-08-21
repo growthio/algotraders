@@ -15,9 +15,9 @@ of securities using a FYERS DEMAT account.
     note, and no changes are yet made.
 """
 
-from typing import Optional, Iterable
+from typing import Optional, Iterable, List
 
-from algotraders.brokers.base import BaseBrokerAPI
+from algotraders.brokers.base import BaseBrokerAPI, requireLogin
 
 class FyersAPI(BaseBrokerAPI):
     """
@@ -109,6 +109,7 @@ class FyersAPI(BaseBrokerAPI):
         return False
     
 
+    @requireLogin
     async def fetchData(self, *args, **kwargs) -> Iterable:
         """
         Fetch historical/real-time data using the Broker's API for an
@@ -120,6 +121,7 @@ class FyersAPI(BaseBrokerAPI):
         pass
 
 
+    @requireLogin
     async def executeOrder(self, *args, **kwargs) -> Optional[object]:
         """
         Execute buy/sell of securities through the exchange using the
@@ -140,6 +142,17 @@ class FyersAPI(BaseBrokerAPI):
         limits) before delegating to the concrete API call. These rules
         must be developed in the strategies and from where the order
         is placed, and then the function should be called.
+        """
+
+        pass
+
+
+    @requireLogin
+    def getPositions(self) -> List[dict]:
+        """
+        Get the current position from the FYERS DEMAT account, and
+        if there is a stop signal based on the current position (like
+        the maximum loss incurred etc.) this value should be called.
         """
 
         pass

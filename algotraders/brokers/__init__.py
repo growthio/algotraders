@@ -14,6 +14,13 @@ from algotraders.brokers.registry import (
     registerBroker, availableBrokers, getBrokerInterface
 )
 
+registerBroker(
+    "FYERS API v2",
+    modulePath = "algotraders.brokers.fyers.py",
+    unifiedClass = "FyersAPI",
+    requirements = ["fyers_apiv2"]
+)
+
 __all__ = [
     "registerBroker", "availableBrokers", "getBrokerInterface"
 ]
