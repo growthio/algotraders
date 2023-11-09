@@ -13,9 +13,16 @@ of securities using a FYERS DEMAT account.
     The version release was done before any implementation of v1 logic
     into our broker services. The details are documented as a process
     note, and no changes are yet made.
+
+..versionchanged:: 2023-11-09 FYERS API v3 was Released:
+    A stable and improved v3 version was released before implementation
+    of the broker services. The details are documented as a process
+    note, and this enforces more regulations as directed by SEBI.
 """
 
 from typing import Optional, Iterable, List
+
+from fyers_apiv3 import fyersModel
 
 from algotraders.brokers.base import BaseBrokerAPI, requireLogin
 
@@ -50,9 +57,14 @@ class FyersAPI(BaseBrokerAPI):
             the end user know which services are being used. Check
             `blog <https://fyers.in/community/blogs-gdppin8d/post/introducing-my-api-f8nksVTo2uprJcD>`_
             for more information.
+
+        ..versionchanged:: 2023-11-09 Updated API Version Number (v3):
+            FYERS API v3 was released that enforces multiple regulatory
+            changes by SEBI. More details is available in the
+            `documentation <https://myapi.fyers.in/docsv3>`_.
         """
 
-        return "FYERS API v2"
+        return "FYERS API v3"
 
 
     @property
@@ -63,7 +75,7 @@ class FyersAPI(BaseBrokerAPI):
         more information.
         """
 
-        return "https://trade.fyers.in/index.html"
+        return "https://trade.fyers.in/api-login/redirect-uri/index.html"
 
 
     def login(
@@ -95,9 +107,38 @@ class FyersAPI(BaseBrokerAPI):
 
             * **secretKey** (*str*): Secret key, this value is defined
                 during creating a new application in the API page.
+
+        **Regulatory Change(s)**
+
+        As per the latest SEBI regulations, username is the application
+        code with a secret key generated during creation of the app.
+        In addition, it is now mandatory to use a two-factor authentication
+        key which is implemented in the login and the authentication
+        token expires on a daily basis.
         """
 
-        pass
+        session = fyersModel.SessionModel(
+            client_id = username,
+            secret_key = password,
+            redirect_uri = self.redirectURL,
+            response_type = "code",
+            grant_type = "authorization_code"
+        )
+
+        authURL = session.generate_authcode()
+        print("Login with this URL:\n", authURL)
+
+        AUTH_CODE = input("Enter auth_code from redirected URL: ")
+        session.set_token(AUTH_CODE)
+        response = session.generate_token()
+
+        ACCESS_TOKEN = response["access_token"]
+        print("Access Token:", ACCESS_TOKEN)
+
+        self.status = True
+        return fyersModel.FyersModel(
+            client_id = username, token = ACCESS_TOKEN
+        )
 
 
     def logout(self) -> bool:
@@ -107,7 +148,7 @@ class FyersAPI(BaseBrokerAPI):
         """
 
         return False
-    
+
 
     @requireLogin
     async def fetchData(self, *args, **kwargs) -> Iterable:
