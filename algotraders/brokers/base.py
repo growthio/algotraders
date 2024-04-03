@@ -30,6 +30,10 @@ def requireLogin(func : Callable[..., Any]) -> Callable[..., Any]:
     raises an ``NotConnectedError`` when the method was not called or
     logout method was invoked in the script.
 
+    ..versionchanged:: 2024-04-02 Refactoring with sessionManager
+        A ``sessionManager`` is optional callable attribute of the
+        class which is ``None`` by default.
+
     .. code-block:: python
 
         class NewBrokerAPI(BaseBrokerAPI):
@@ -37,12 +41,12 @@ def requireLogin(func : Callable[..., Any]) -> Callable[..., Any]:
 
             def login(...) -> ...:
                 ...
-                self.status = True
+                self.sessionManager = ...()
 
 
             def logout(...) -> ...:
                 ...
-                self.status = False
+                self.sessionManager = None
 
             @requireLogin
             async def fetchData(...)-> Iterable:
@@ -61,7 +65,7 @@ def requireLogin(func : Callable[..., Any]) -> Callable[..., Any]:
     if useAsync:
         @wraps(func)
         async def asyncWrapper(self : "BaseBrokerAPI", *args, **kwargs) -> Any:
-            status = getattr(self, "status", False)
+            status = getattr(self, "sessionManager", None)
 
             if not status:
                 raise NotConnectedError(
@@ -74,7 +78,7 @@ def requireLogin(func : Callable[..., Any]) -> Callable[..., Any]:
 
     @wraps(func)
     def syncWrapper(self : "BaseBrokerAPI", *args, **kwargs) -> Any:
-        status = getattr(self, "status", False)
+        status = getattr(self, "sessionManager", None)
 
         if not status:
             raise NotConnectedError(
@@ -100,11 +104,28 @@ class BaseBrokerAPI(ABC):
         passed to ``semaphore`` (a synchronous primitive that is used
         to control access to a shared resource by multiple threads)
         that provides rate limitation in a production environment.
+
+    **Session Manager**
+
+    A class attribute is created in the abstract base class to handle
+    sessions. A session manager is typically available across all
+    brokers platform which can be used to interact to execute orders,
+    check current positions etc. The session manager is set to a
+    callable function when ``.login()`` is called, else is always
+    ``None`` (or when ``.logout()`` is called). If a broker does not
+    require any session manager then it is recommended to create one
+    to keep the code structure same as other brokers' services.
+
+    ..versionchanged:: 2024-04-02 Refactored status with sessionManager
+        The status object was previously designed to check if the
+        broker login is done, but is now deprecated for sessionManager
+        which is ``None`` by default, else when ``.login()`` is called
+        set to a callable method which can then be widely used.
     """
 
     def __init__(self, maxConcurrent : int) -> None:
-        self.status = False
         self.semaphore = asyncio.Semaphore(maxConcurrent)
+        self.sessionManager : Optional[Callable] = None
 
 
     @property
@@ -137,7 +158,7 @@ class BaseBrokerAPI(ABC):
     @abstractmethod
     def login(
         self, username : str, password : str, *args, **kwargs
-    ) -> object:
+    ) -> bool:
         """
         Perform login operation to the Broker's API. A broker's API
         login may have different regulatory guidelines based on which
