@@ -80,7 +80,7 @@ class FyersAPI(BaseBrokerAPI):
 
     def login(
         self, username : str, password : str, **kwargs
-    ) -> object:
+    ) -> bool:
         """
         Perform login operation to the Broker's API. A broker's API
         login may have different regulatory guidelines based on which
@@ -135,10 +135,11 @@ class FyersAPI(BaseBrokerAPI):
         ACCESS_TOKEN = response["access_token"]
         print("Access Token:", ACCESS_TOKEN)
 
-        self.status = True
-        return fyersModel.FyersModel(
+        self.sessionManager = fyersModel.FyersModel(
             client_id = username, token = ACCESS_TOKEN
         )
+
+        return True
 
 
     def logout(self) -> bool:
@@ -147,6 +148,7 @@ class FyersAPI(BaseBrokerAPI):
         new call will again require ``.login()`` method to be called.
         """
 
+        self.sessionManager = None
         return False
 
 
