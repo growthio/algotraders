@@ -130,19 +130,6 @@ class BaseBrokerAPI(ABC):
 
     @property
     @abstractmethod
-    def brokerName(self) -> str:
-        """
-        Name of the broker, which can be any valid string based on
-        which the concrete class is to be defined and all the
-        operations are to be done. The name of the broker may also be
-        used for different auditing purposes.
-        """
-
-        pass
-
-
-    @property
-    @abstractmethod
     def redirectURL(self) -> str:
         """
         Redirect URL which is provided by the Broker's
@@ -349,4 +336,8 @@ class BaseBrokerAPI(ABC):
 
 
     def __repr__(self) -> str:
-        return f"ID: {id(self)}; Broker Name: {self.brokerName}"
+        return (
+            f"Object ID: {id(self)}; "
+            f"Broker Name: {self.__class__.__name__}; "
+            f"Redirect URL: {self.redirectURL}"
+        )
