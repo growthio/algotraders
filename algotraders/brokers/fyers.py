@@ -45,29 +45,6 @@ class FyersAPI(BaseBrokerAPI):
 
 
     @property
-    def brokerName(self) -> str:
-        """
-        Name of the broker for which the concrete method is defined,
-        and can be used for logging and/or auditing purpose.
-
-        ..versionchanged:: 2021-08-20 Added API Version Number:
-            FYERS API v2 is a major change with underlying library and
-            other module changes. To reflect this changes, we've
-            decided to add the version number to the property to let
-            the end user know which services are being used. Check
-            `blog <https://fyers.in/community/blogs-gdppin8d/post/introducing-my-api-f8nksVTo2uprJcD>`_
-            for more information.
-
-        ..versionchanged:: 2023-11-09 Updated API Version Number (v3):
-            FYERS API v3 was released that enforces multiple regulatory
-            changes by SEBI. More details is available in the
-            `documentation <https://myapi.fyers.in/docsv3>`_.
-        """
-
-        return "FYERS API v3"
-
-
-    @property
     def redirectURL(self) -> str:
         """
         The API redirection URL, this value is defined when creating

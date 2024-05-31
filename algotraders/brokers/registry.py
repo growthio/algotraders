@@ -119,7 +119,7 @@ def getBrokerInterface(
     if brokerName not in available:
         raise UnavailableBroker(
             f"Broker {brokerName} is not registered, please raise a "
-            "new requirement at https://github.com/growthio/algotraders/issues/new"
+            "ticket at https://github.com/growthio/algotraders/issues/new"
         )
 
     entryPoint = BrokerRegistry[brokerName]

@@ -15,10 +15,10 @@ from algotraders.brokers.registry import (
 )
 
 registerBroker(
-    "FYERS API v2",
+    "fyers",
     modulePath = "algotraders.brokers.fyers.py",
     unifiedClass = "FyersAPI",
-    requirements = ["fyers_apiv2"]
+    requirements = ["fyers_apiv3"]
 )
 
 __all__ = [
