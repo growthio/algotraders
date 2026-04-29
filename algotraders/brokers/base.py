@@ -191,7 +191,7 @@ class BaseBrokerAPI(ABC):
 
     @abstractmethod
     async def fetchData(
-        self, symbol : str, range : Tuple[dt.datetime, dt.datetime],
+        self, symbol : str, dateRange : Tuple[dt.datetime, dt.datetime],
         timeframe : str = "1m", *args, **kwargs
     ) -> Iterable:
         """
@@ -210,8 +210,8 @@ class BaseBrokerAPI(ABC):
             as capable by the system, check "memory footprint" note
             for additional details.
 
-        :type  range: Tuple[dt.datetime, dt.datetime]
-        :param start: Time period range (both end inclusive) for which
+        :type  dateRange: Tuple[dt.datetime, dt.datetime]
+        :param dateRange: Time period range (both end inclusive) for which
             the historic data needs to be fetched. Broker's API may
             require formatting the value (for example using epoch time
             or passing string) which must be handled in the concrete
