@@ -18,9 +18,11 @@ import asyncio
 import inspect
 import tracemalloc
 
+import datetime as dt
+
 from functools import wraps
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Optional, Iterable, List
+from typing import Any, Callable, Optional, Iterable, List, Tuple
 
 from algotraders.errors import NotConnectedError
 
@@ -130,19 +132,6 @@ class BaseBrokerAPI(ABC):
 
     @property
     @abstractmethod
-    def brokerName(self) -> str:
-        """
-        Name of the broker, which can be any valid string based on
-        which the concrete class is to be defined and all the
-        operations are to be done. The name of the broker may also be
-        used for different auditing purposes.
-        """
-
-        pass
-
-
-    @property
-    @abstractmethod
     def redirectURL(self) -> str:
         """
         Redirect URL which is provided by the Broker's
@@ -201,12 +190,37 @@ class BaseBrokerAPI(ABC):
 
 
     @abstractmethod
-    async def fetchData(self, *args, **kwargs) -> Iterable:
+    async def fetchData(
+        self, symbol : str, dateRange : Tuple[dt.datetime, dt.datetime],
+        timeframe : str = "1m", *args, **kwargs
+    ) -> Iterable:
         """
         Fetch historical/real-time data using the Broker's API for an
         underlying security at a provided granuality. The function is
         asynchronous in nature and thus provides flexibility to fetch
         multiple securities data at once.
+
+        :type  symbol: str
+        :param symbol: Symbol name or an identifiable value as in the
+            Broker's API documentation for which historic data needs
+            to be fetched. For example, "HDFCBANK-EQ:NSE" may be used
+            to fetch data for "HDFCBANK" (equity) listed under NSE.
+            The main reason behind creating an asynchronous function
+            to fetch data is to process multiple symbols at one time
+            as capable by the system, check "memory footprint" note
+            for additional details.
+
+        :type  dateRange: Tuple[dt.datetime, dt.datetime]
+        :param dateRange: Time period range (both end inclusive) for which
+            the historic data needs to be fetched. Broker's API may
+            require formatting the value (for example using epoch time
+            or passing string) which must be handled in the concrete
+            method of the interface.
+
+        :type  timeframe: str
+        :param timeframe: Timeframe or granularity or resolution for
+            which data needs to be fetched. For example, "1m" (default)
+            may be used to refer to minute level candle data values.
 
         Typically, in a production environment, we want to have a
         rate limitation based on the available resources (or limit to
@@ -244,6 +258,19 @@ class BaseBrokerAPI(ABC):
 
             >> Current Memory : ... MB
             >> Peak Memory    : ... MB # this is your baseline footprint
+
+        **Return Value**
+
+        The function is designed to return an ``Iterable`` value which
+        must be be processed using an external function to reduce
+        memory dependency. An efficient production system should use
+        an asynchronous queue to process all incoming data into the
+        required output format.
+
+        :rtype:   Iterable
+        :returns: Returns an API response typically in a JSON (dict)
+            format which should be passed to a processing engine (ETL)
+            for data transformations, loading and/or storing.
         """
 
         pass
@@ -349,4 +376,8 @@ class BaseBrokerAPI(ABC):
 
 
     def __repr__(self) -> str:
-        return f"ID: {id(self)}; Broker Name: {self.brokerName}"
+        return (
+            f"Object ID: {id(self)}; "
+            f"Broker Name: {self.__class__.__name__}; "
+            f"Redirect URL: {self.redirectURL}"
+        )

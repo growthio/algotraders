@@ -67,9 +67,10 @@ def registerBroker(brokerName : str, **kwargs) -> None:
     as per the endusers' selected broker service.
 
     :type  brokerName: str
-    :param brokerName: Name of the broker, this can be any name or can
-        be one as defined under the ``brokerName`` property of the
-        concrete class implementation.
+    :param brokerName: Globally identifiable (and SEO compatible name)
+        name which uniquely identifies the broker. It is recommended
+        to keep the name of the broker in lower case, and named as per
+        the filename in which the broker API is defined.
 
     **Keyword Arguments**
 
