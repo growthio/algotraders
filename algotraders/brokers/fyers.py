@@ -20,7 +20,9 @@ of securities using a FYERS DEMAT account.
     note, and this enforces more regulations as directed by SEBI.
 """
 
-from typing import Optional, Iterable, List
+import datetime as dt
+
+from typing import Optional, Iterable, List, Tuple
 
 from fyers_apiv3 import fyersModel
 
@@ -130,15 +132,63 @@ class FyersAPI(BaseBrokerAPI):
 
 
     @requireLogin
-    async def fetchData(self, *args, **kwargs) -> Iterable:
+    async def fetchData(
+        self, symbol : str, dateRange : Tuple[dt.datetime, dt.datetime],
+        timeframe : str = "1m", *_, **kwargs
+    ) -> Iterable:
         """
         Fetch historical/real-time data using the Broker's API for an
         underlying security at a provided granuality. The function is
         asynchronous in nature and thus provides flexibility to fetch
         multiple securities data at once.
+
+        :type  symbol: str
+        :param symbol: FYERS API v3 uses standard naming convention
+            as ``<exchange>:<symbol>-<class>`` as symbol to fetch the
+            underlying security data.
+
+        :type  dateRange: Tuple[dt.datetime, dt.datetime]
+        :param dateRange: Time period range (both end inclusive) for which
+            the historic data needs to be fetched. Broker's API may
+            require formatting the value (for example using epoch time
+            or passing string) which must be handled in the concrete
+            method of the interface. The tuple value is formatted and
+            passed to ``range_from`` and ``range_to`` attribute of the
+            session manager object.
+
+        :type  timeframe: str
+        :param timeframe: Timeframe or granularity or resolution for
+            which data needs to be fetched. For example, "1m" (default)
+            may be used to refer to minute level candle data values.
+            This value is passed to ``resolution`` argument to define
+            the data resolution.
+
+        **Keyword Arguments**
+
+        To further format or refine the historical data, the following
+        data flags are defined (with defaults) to control the response
+        as below:
+
+            * **date_format** (*str*): Format of the data, which can
+                be used to change between epoch time (0, default) or
+                 using the standard value (1) to get the data.
+
+            * **cont_flag** (*int*): Continuity flag, defaults to 1.
+                Check API documentation for more details.
         """
 
-        pass
+        dateRange = tuple(map(
+            lambda x : str(int(x.timestamp())), dateRange
+        )) # type: ignore
+
+        data = {
+            "symbol" : symbol, "resolution" : timeframe,
+            "range_from" : dateRange[0], "range_to" : dateRange[1],
+            "date_format" : kwargs.get("date_format", "0"),
+            "cont_flag" : kwargs.get("date_format", 1),
+        }
+
+        return self.sessionManager.history(data = data) # type: ignore
 
 
     @requireLogin
