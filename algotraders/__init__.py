@@ -14,3 +14,8 @@ are available in the documentation.
 __version__ = "v0.0.1.dev0"
 
 # init-time options registrations, use api.py for imports
+from algotraders.api import (
+    brokers, services, strategies
+)
+
+__all__ = ["brokers", "services", "strategies"]
