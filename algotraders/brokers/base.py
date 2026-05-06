@@ -292,10 +292,11 @@ class BaseBrokerAPI(ABC):
         :type  buffer: float
         :param buffer: The ``tracemalloc`` calculates the current and
             the peak memory usage, which is the baseline value. It is
-            recommended to keep a buffer (of atleast 20%) for  garbage
+            recommended to keep a buffer (of atleast 20%) for garbage
             collection delays that may be required. Defaults to None,
             which internally calculates and puts a 20% buffer from the
-            peak value.
+            peak value. If a custom value is passed, then it must be
+            in MB terms.
 
         **Deep Profiling**
 
@@ -334,7 +335,7 @@ class BaseBrokerAPI(ABC):
             # stop tracemalloc to prevent memory leaks in the profiler
             tracemalloc.stop()
 
-        buffer = buffer or 0.20 * peak
+        buffer = buffer or 0.20 * (peak / 10**6)
         return math.floor(limit / ((peak / 10**6) + buffer))
 
 
