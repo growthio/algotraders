@@ -75,7 +75,7 @@ def requireLogin(func : Callable[..., Any]) -> Callable[..., Any]:
                     "was not called, or logout() has been called."
                 )
             
-            return await func(*args, **kwargs)
+            return await func(self, *args, **kwargs)
         return asyncWrapper
 
     @wraps(func)
@@ -87,8 +87,8 @@ def requireLogin(func : Callable[..., Any]) -> Callable[..., Any]:
                 f"Cannot call '{func.__name__}()', either login() "
                 "was not called, or logout() has been called."
             )
-        
-        return func(*args, **kwargs)
+
+        return func(self, *args, **kwargs)
     return syncWrapper
 
 
