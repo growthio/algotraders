@@ -8,26 +8,44 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "algotraders"
 dynamic = ["version"]
-description = "Unified Algorithimic Tradng using Broker's API"
+description = "Unified Algorithmic Trading using Broker's API"
 readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.12"
-license = {file = "LICENSE" }
+license = {file = "LICENSE"}
+authors = [
+    {name = "ZenithClown", email = "dpramanik.official@gmail.com"}
+]
+
+keywords = [
+    "algorithim", "automatic", "trading", "strategy", "market",
+    "algotrading", "broker", "api", "automation", "tradingview",
+    "alerts", "nse", "bse", "india", "global", "f&o", "futures",
+    "options", "options trading", "futures trading", "backtesting",
+    "historical data", "exchanges api", "commodities", "fyers", "kite",
+    "zerodha", "coin", "groww", "angelone", "tickertape", "screener"
+]
 
 classifiers = [
     "Development Status :: 1 - Planning",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Developers",
+    "Topic :: Office/Business :: Financial :: Investment",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
-    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)"
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
 ]
 
 dependencies = []
 
-[tool.setuptools]
-py-modules = []
+[project.urls]
+Homepage = "https://github.com/growthio/algotraders"
+Repository = "https://github.com/growthio/algotraders"
+Issues = "https://github.com/growthio/algotraders/issues"
 
 [tool.setuptools.packages.find]
 exclude = ["tests*", "examples*"]
