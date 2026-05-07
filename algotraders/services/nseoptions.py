@@ -100,7 +100,7 @@ class NSEOptionChain:
                 response = session.json()
 
                 fetched = True # exit the loop if json is fetched
-            except Exception as e:
+            except (requests.RequestException, ValueError) as e:
                 count += 1 # track number of times the fetch fails
                 print(f"{time.ctime()} : Failed to Fetch Data - {e}")
 
