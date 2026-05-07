@@ -6,7 +6,7 @@
 version: 2
 updates:
 
-  # maintain dependecies for python-packages using pip
+  # maintain dependencies for python-packages using pip
   - package-ecosystem: "pip"
     directory: "/" # Location of package manifests
     schedule:
@@ -20,12 +20,11 @@ updates:
     commit-message:
       prefix: "pip-prod"
       prefix-development: "pip-dev"
-      include: "scope"
 
     # limit number of open-pull requests for dependabot
     open-pull-requests-limit: 10
       
-  # maintain dependecies for github-actions
+  # maintain dependencies for github-actions
   - package-ecosystem: "github-actions"
     directory: "/" # Location of package manifests
     schedule:
