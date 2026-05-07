@@ -13,5 +13,6 @@ service layer for :mod:`algotraders` module.
 """
 
 from algotraders.services import nseoptions
+from algotraders.services import optionsui
 
-__all__ = ["nseoptions"]
+__all__ = ["nseoptions", "optionsui"]

@@ -48,7 +48,22 @@ Repository = "https://github.com/growthio/algotraders"
 Issues = "https://github.com/growthio/algotraders/issues"
 
 [tool.setuptools.packages.find]
+where = ["."]
 exclude = ["tests*", "examples*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "algotraders.__version__"}
+
+[project.scripts]
+optionsui = "algotraders.services.optionsui.main:main"
+
+[tool.setuptools.package-data]
+"algotraders.services.optionsui" = [
+    "index.html",
+    "package.json",
+    "package-lock.json",
+    "vite.config.js",
+    "eslint.config.js",
+    "public/**/*",
+    "src/**/*",
+]
