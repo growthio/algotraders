@@ -10,7 +10,10 @@
         .github/,
 
         # ignore following house-keeping directories from checks
-        docs/, assets/, examples/
+        # ignore following house-keeping directories from checks
+        docs/,
+        assets/,
+        examples/
 
     # Typically for a package, per-files ignore is very useful
     per-file-ignores =
