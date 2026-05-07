@@ -302,7 +302,7 @@ class OptionChainProcessing:
         # ? get put-call-ratio and total aggregated traded volume
         self.tot_oi_ce = self.response["filtered"]["CE"]["totOI"]
         self.tot_oi_pe = self.response["filtered"]["PE"]["totOI"]
-        self.put_call_ratio = self.tot_oi_pe / self.tot_oi_ce
+        self.put_call_ratio = self.tot_oi_pe / self.tot_oi_ce if self.tot_oi_ce > 0 else 0.0
 
         self.tot_vol_ce = self.response["filtered"]["CE"]["totVol"]
         self.tot_vol_pe = self.response["filtered"]["PE"]["totVol"]
