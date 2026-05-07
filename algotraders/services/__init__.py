@@ -12,3 +12,6 @@ indirectly influence trading strategies and is thus is added as a
 service layer for :mod:`algotraders` module.
 """
 
+from algotraders.services import nseoptions
+
+__all__ = ["nseoptions"]

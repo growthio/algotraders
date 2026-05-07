@@ -45,7 +45,7 @@ import prettify # noqa: F401, F403 # pyright: ignore[reportMissingImports]
 # ! append the root (this file) directory to the system path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-import nseoptions # https://github.com/iTraders/nseoptions
+import algotraders
 
 def writejson(response : dict, symbol : str, timestamp : dt.datetime | str, outdir : str) -> bool:
     timestamp = str(timestamp).replace(":", "") # time is now formatted
@@ -94,7 +94,7 @@ if __name__ == "__main__":
     # ? get arguments from the argparse controller - use in forward
     args = parser.parse_args()
 
-    API = nseoptions.NSEOptionChain(
+    API = algotraders.services.nseoptions.NSEOptionChain(
         symbol, verify = args.verify
     ) # main api object, loop on
     _ = API.setconfig() # configuration settings for the API, onetime
@@ -124,7 +124,7 @@ if __name__ == "__main__":
         response = API.response(waittime = 20) # auto retry if failed
 
         # ? create the model object, this is on the fly, processing
-        model = nseoptions.processing.OptionChainProcessing(
+        model = algotraders.services.nseoptions.OptionChainProcessing(
             symbol, apikey = "", response = response, expiry = expiry
         )
 
