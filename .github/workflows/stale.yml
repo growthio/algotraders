@@ -1,0 +1,23 @@
+name: Mark Isuues/PRs Stale
+
+on:
+  schedule:
+  - cron: '0 0 * * 1,5'
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+
+    steps:
+    - uses: actions/stale@v10
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        days-before-stale: 30
+        days-before-close: -1
+        stale-pr-message: 'PR has No Activity for more than 30 Days.'
+        stale-issue-message: 'Issue has No Activity for more than 30 Days.'
+        stale-pr-label: 'pr/mothballed'
+        stale-issue-label: 'issue/stale'
