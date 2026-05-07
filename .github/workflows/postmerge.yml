@@ -1,0 +1,34 @@
+name: Post Merge Label Cleanup
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [master]
+
+jobs:
+  remove-labels:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Remove Stale PR Labels on Merge
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const labels = ['pr/blocked', 'pr/review'];
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+
+            for (const label of labels) {
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number, name: label });
+                console.log(`Removed label: ${label}`);
+              } catch (error) {
+                // ? 404 means the label was not present on this PR — safe to skip
+                if (error.status !== 404) throw error;
+                console.log(`Label not present, skipping: ${label}`);
+              }
+            }
