@@ -22,7 +22,7 @@
         # F405 ... may be undefined, or defined from star imports
         algotraders/__init__.py: F401, F403, F405
 
-    # Recommended to restrict in 70 lines, but sometimes violoated,
+    # Recommended to restrict to 79 characters (PEP 8), but set to 88
     # due to long URLs which can be ignored by setting line length.
     max-line-length = 88
 
