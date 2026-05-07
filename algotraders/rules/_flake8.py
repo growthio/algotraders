@@ -4,8 +4,8 @@ Custom Flake8 Plugin: Enforce Custom Blank-Line Rule (BL001, BL002)
 -------------------------------------------------------------------
 
 Implements two project-specific blank-line rules that replace the
-default Flake8 behavior for E301, E302, E303, and E305 to match the
-repository's code formatting conventions.
+default Flake8 behavior for E301, E302, E303 to match the repository's
+code formatting conventions.
 """
 
 import ast
@@ -28,8 +28,8 @@ class BlankLinesChecker:
             that would flag two blank lines inside a class.
 
     :NOTE: Extended ``.flake8`` default rule in configuration set to
-        ignore ``E301, E302, E303, E305`` so that the built-in rules
-        do not conflict with the custom rule BL001 / BL002.
+        ignore ``E301, E302, E303`` so that the built-in rules do not
+        conflict with the custom rule BL001 / BL002.
 
     :type  tree: ast.AST
     :param tree: Get, read and check the Abstract Syntax Tree (AST)
