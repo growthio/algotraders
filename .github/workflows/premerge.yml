@@ -1,0 +1,49 @@
+name: Pre Merge Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [master]
+
+jobs:
+  check-issue-labels:
+    name: Linked Issue Label Gate
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      issues: read
+
+    steps:
+      - name: Fail if a Linked Issue has Blocking Labels
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const body = context.payload.pull_request.body || '';
+
+            // ? Match GitHub auto-closing keywords: fix/fixes/fixed/close/closes/closed/resolve/resolves/resolved #N
+            const pattern = /(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?)\s+#(\d+)/gi;
+            const issueNumbers = [...new Set([...body.matchAll(pattern)].map(m => parseInt(m[1], 10)))];
+
+            if (issueNumbers.length === 0) {
+              console.log('No linked issues found in PR body. Check passed.');
+              return;
+            }
+
+            console.log(`Checking linked issues: #${issueNumbers.join(', #')}`);
+
+            const blocked = [];
+            for (const issue_number of issueNumbers) {
+              const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number });
+              const labels = issue.labels.map(l => l.name);
+              if (labels.includes('issue/blocked')) {
+                blocked.push(issue_number);
+              }
+            }
+
+            if (blocked.length > 0) {
+              core.setFailed(`Cannot merge — linked issue(s) are blocked: ${blocked.map(n => '#' + n).join(', ')}`);
+            } else {
+              console.log('No blocked linked issues. Check passed.');
+            }

@@ -1,0 +1,36 @@
+# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
+# For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
+
+name: Code Linting (.flake8)
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+
+    steps:
+    - uses: actions/checkout@v6
+    - name: Setup Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Installing Workflow Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install flake8
+    - name: Starting Code Liniting Checks
+      run: |
+        # WARNING: the project uses partial PEP-8; check .flake8 config
+        # ? Stop the Build if there are Syntax/Undefined Names Error(s)
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # ? Exit Zero: Treats the Erros as Warnings; GH Editor is 127 Character Wide
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
