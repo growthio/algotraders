@@ -68,6 +68,20 @@ class BaseBrokerAuthentication(ABC):
         self.password = password
 
 
+    @property
+    @abstractmethod
+    def redirectURL(self) -> str:
+        """
+        Redirect URL which is provided by the Broker's
+        API and the value should be validated as per documentation.
+        Typically, there is no method to validate this URL, unless an
+        explicit function call is provided; which must be implemented
+        in the concrete class.
+        """
+
+        pass
+
+
     @abstractmethod
     def login(self, *args, **kwargs) -> Any:
         """
@@ -132,20 +146,6 @@ class BaseBrokerAPI(ABC):
 
         # ? get websocket, typically for real-time data and ordering
         self.webSocket = webSocket
-
-
-    @property
-    @abstractmethod
-    def redirectURL(self) -> str:
-        """
-        Redirect URL which is provided by the Broker's
-        API and the value should be validated as per documentation.
-        Typically, there is no method to validate this URL, unless an
-        explicit function call is provided; which must be implemented
-        in the concrete class.
-        """
-
-        pass
 
 
     @abstractmethod

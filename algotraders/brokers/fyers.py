@@ -20,13 +20,111 @@ of securities using a FYERS DEMAT account.
     note, and this enforces more regulations as directed by SEBI.
 """
 
+import webbrowser
 import datetime as dt
 
-from typing import Optional, Iterable, List, Tuple
+from typing import Any, Callable, Optional, Iterable, List, Tuple
 
 from fyers_apiv3 import fyersModel
 
-from algotraders.brokers.base import BaseBrokerAPI, requireLogin
+from algotraders.brokers.base import (
+    BaseBrokerAuthentication, BaseBrokerAPI
+)
+
+class FyersAuthentication(BaseBrokerAuthentication):
+    """
+    Implementation of concrete method for any security services that
+    is required for FYERS API services - ``.login()`` operation.
+
+    :type  username: str
+    :param username: Username or Client ID which is available from
+        from the Broker and is typically the Login ID.
+
+    :type  password: str
+    :param password: Password to login to access the Broker's API, this
+        value may be different from the password you used to login to
+        the "DEMAT" account and is sometime referred as the "secret
+        key" which is provided when creating the API endpoint in the
+        Broker's API Terminal.
+    """
+
+    def __init__(self, username : str, password : str) -> None:
+        self.username = username
+        self.password = password
+
+
+    @property
+    def redirectURL(self) -> str:
+        """
+        The API redirection URL, this value is defined when creating
+        a new app, check `documentation <https://myapi.fyers.in>`_ for
+        more information.
+        """
+
+        return "https://trade.fyers.in/api-login/redirect-uri/index.html"
+
+
+    def login(self, accessToken: Optional[str] = None) -> Any:
+        """
+        Perform login operation to the Broker's API. A broker's API
+        login may have different regulatory guidelines based on which
+        the concrete function should be modeled. Typically, for an
+        Indian Broker, SEBI is the regulatory body who provides the
+        guidelines to connect using the following parameters.
+
+        :type  accessToken: Optional[str]
+        :param accessToken: As per SEBI guidelines, an access token is
+            valid for one day. This means that any running services
+            must be switched off and on the next day. However, if the
+            API is closed then it can be restarted using the same
+            access token for the day.
+
+        **Regulatory Change(s)**
+
+        As per the latest SEBI regulations, username is the application
+        code with a secret key generated during creation of the app.
+        In addition, it is now mandatory to use a two-factor authentication
+        key which is implemented in the login and the authentication
+        token expires on a daily basis.
+        """
+
+        client_id, secret_key = self.username, self.password
+
+        def generateAccessToken() -> str:
+            session = fyersModel.sessionModel(
+                client_id = client_id, secret_key = secret_key,
+                redirect_uri = self.redirectURL, response_type = "code",
+                grant_type = "authorization_code"
+            )
+
+            authURL = session.generate_authcode()
+            webbrowser.open(authURL)
+
+            # ! this uses no authentication, and directly pasted
+            authorizationCode = input(
+                "Login and Enter the Authorication Code: "
+            )
+
+            # ? add the authorization code to get the access token
+            session.set_token(authorizationCode)
+            response = session.generate_token()
+            return response["access_token"]
+
+        accessToken = accessToken or generateAccessToken()
+        return fyersModel.FyersModel(
+                username = self.username, token = accessToken
+            )
+
+
+    def logout(self) -> bool:
+        """
+        The function should ideally be used to terminate the service
+        such that any secret key (or tokens) generated after login is
+        revoked. However, as on date this is not yet available.
+        """
+
+        pass
+
 
 class FyersAPI(BaseBrokerAPI):
     """
@@ -42,96 +140,16 @@ class FyersAPI(BaseBrokerAPI):
         that provides rate limitation in a production environment.
     """
 
-    def __init__(self, maxConcurrent : int) -> None:
-        super().__init__(maxConcurrent = maxConcurrent)
-
-
-    @property
-    def redirectURL(self) -> str:
-        """
-        The API redirection URL, this value is defined when creating
-        a new app, check `documentation <https://myapi.fyers.in>`_ for
-        more information.
-        """
-
-        return "https://trade.fyers.in/api-login/redirect-uri/index.html"
-
-
-    def login(
-        self, username : str, password : str, **kwargs
-    ) -> bool:
-        """
-        Perform login operation to the Broker's API. A broker's API
-        login may have different regulatory guidelines based on which
-        the concrete function should be modeled. Typically, for an
-        Indian Broker, SEBI is the regulatory body who provides the
-        guidelines to connect using the following parameters.
-
-        :type  username: str
-        :param username: Username or Client ID which is available from
-            from the Broker and is typically the Login ID.
-
-        :type  password: str
-        :param password: Password to login to access the Broker's API,
-            this value may be different from the password you used to
-            login to the "DEMAT" account and is sometime referred as
-            the "secret key" which is provided when creating the API
-            endpoint in the Broker's API Terminal.
-
-        **Keyword Agrument(s)**
-
-        The keyword arguments are defined typically basis of rules
-        and guidelines based on regulatory body - SEBI. The arguments
-        are as below:
-
-            * **secretKey** (*str*): Secret key, this value is defined
-                during creating a new application in the API page.
-
-        **Regulatory Change(s)**
-
-        As per the latest SEBI regulations, username is the application
-        code with a secret key generated during creation of the app.
-        In addition, it is now mandatory to use a two-factor authentication
-        key which is implemented in the login and the authentication
-        token expires on a daily basis.
-        """
-
-        session = fyersModel.SessionModel(
-            client_id = username,
-            secret_key = password,
-            redirect_uri = self.redirectURL,
-            response_type = "code",
-            grant_type = "authorization_code"
+    def __init__(
+        self, sessionManager : Callable, maxConcurrency : int,
+        webSocket : Optional[Callable] = None
+    ) -> None:
+        super().__init__(
+            sessionManager = sessionManager,
+            maxConcurrency = maxConcurrency, webSocket = webSocket
         )
 
-        authURL = session.generate_authcode()
-        print("Login with this URL:\n", authURL)
 
-        AUTH_CODE = input("Enter auth_code from redirected URL: ")
-        session.set_token(AUTH_CODE)
-        response = session.generate_token()
-
-        ACCESS_TOKEN = response["access_token"]
-        print("Access Token:", ACCESS_TOKEN)
-
-        self.sessionManager = fyersModel.FyersModel(
-            client_id = username, token = ACCESS_TOKEN
-        )
-
-        return True
-
-
-    def logout(self) -> bool:
-        """
-        Performs logout operation from the FYERS API services and any
-        new call will again require ``.login()`` method to be called.
-        """
-
-        self.sessionManager = None
-        return False
-
-
-    @requireLogin
     async def fetchData(
         self, symbol : str, dateRange : Tuple[dt.datetime, dt.datetime],
         timeframe : str = "1m", *_, **kwargs
@@ -191,7 +209,6 @@ class FyersAPI(BaseBrokerAPI):
         return self.sessionManager.history(data = data) # type: ignore
 
 
-    @requireLogin
     async def executeOrder(self, *args, **kwargs) -> Optional[object]:
         """
         Execute buy/sell of securities through the exchange using the
@@ -217,7 +234,6 @@ class FyersAPI(BaseBrokerAPI):
         pass
 
 
-    @requireLogin
     def getPositions(self) -> List[dict]:
         """
         Get the current position from the FYERS DEMAT account, and
