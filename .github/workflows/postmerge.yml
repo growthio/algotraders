@@ -14,7 +14,7 @@ jobs:
 
     steps:
       - name: Remove Stale PR Labels on Merge
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
