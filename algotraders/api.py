@@ -7,6 +7,7 @@ expose publically available toolkits for the module.
 """
 
 from algotraders import brokers
+from algotraders import services
 from algotraders import strategies
 
-__all__ = ["brokers", "strategies"]
+__all__ = ["brokers", "services", "strategies"]
