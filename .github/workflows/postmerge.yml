@@ -32,3 +32,48 @@ jobs:
                 console.log(`Label not present, skipping: ${label}`);
               }
             }
+
+  remove-issue-labels:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Remove issue/blocker Label from Linked Issues
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const pr_number = context.payload.pull_request.number;
+
+            const query = `
+              query($owner: String!, $repo: String!, $pr: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $pr) {
+                    closingIssuesReferences(first: 50) {
+                      nodes { number }
+                    }
+                  }
+                }
+              }
+            `;
+
+            const result = await github.graphql(query, { owner, repo, pr: pr_number });
+            const issues = result.repository.pullRequest.closingIssuesReferences.nodes;
+
+            for (const issue of issues) {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner, repo,
+                  issue_number: issue.number,
+                  name: 'issue/blocker',
+                });
+                console.log(`Removed label 'issue/blocker' from issue #${issue.number}`);
+              } catch (error) {
+                // ? 404 means the label was not present on this issue — safe to skip
+                if (error.status !== 404) throw error;
+                console.log(`Label not present on issue #${issue.number}, skipping`);
+              }
+            }
