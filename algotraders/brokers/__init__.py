@@ -16,9 +16,8 @@ from algotraders.brokers.registry import (
 
 registerBroker(
     "fyers",
-    modulePath = "algotraders.brokers.fyers",
-    unifiedClass = "FyersAPI",
-    requirements = ["fyers_apiv3"]
+    API = "FyersAPI", AUTH = "FyersAuthentication",
+    PATH = "algotraders.brokers.fyers", REQUIRES = ["fyers_apiv3"]
 )
 
 __all__ = [
