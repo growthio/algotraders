@@ -91,7 +91,7 @@ class FyersAuthentication(BaseBrokerAuthentication):
         client_id, secret_key = self.username, self.password
 
         def generateAccessToken() -> str:
-            session = fyersModel.sessionModel(
+            session = fyersModel.SessionModel(
                 client_id = client_id, secret_key = secret_key,
                 redirect_uri = self.redirectURL, response_type = "code",
                 grant_type = "authorization_code"
@@ -112,7 +112,7 @@ class FyersAuthentication(BaseBrokerAuthentication):
 
         accessToken = accessToken or generateAccessToken()
         return fyersModel.FyersModel(
-                username = self.username, token = accessToken
+                client_id = client_id, token = accessToken
             )
 
 

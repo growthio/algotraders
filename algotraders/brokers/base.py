@@ -31,8 +31,6 @@ import datetime as dt
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Optional, Iterable, List, Tuple
 
-from algotraders.errors import NotConnectedError
-
 class BaseBrokerAuthentication(ABC):
     """
     An abstract class that ensure that the core security and broker's
