@@ -11,85 +11,87 @@ we can fetch the historic data asynchronously for multiple securities
 at a time) with rate limitation such that we do not over consume any
 available resources. The rate limitation ensures parallel tasks are
 queued in the system when resource is available.
+
+REFACTOR:: GH#18 Separate Authentication Operation from ``BaseBroker``
+    The base broker will handle all operational functions like data
+    fetching, manipulations, etc. and a separate abstract method will
+    be provided to perform authentication, login/logout and other
+    related operations which does not require a asynchronous or a
+    multithreading or a multiprocessing operations. These security
+    feature is an one time operation which will be required only once
+    during session start. Check GH#18 for more details.
 """
 
 import math
 import asyncio
-import inspect
 import tracemalloc
 
 import datetime as dt
 
-from functools import wraps
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Optional, Iterable, List, Tuple
 
 from algotraders.errors import NotConnectedError
 
-def requireLogin(func : Callable[..., Any]) -> Callable[..., Any]:
+class BaseBrokerAuthentication(ABC):
     """
-    A decorator defined to wrap methods which requires a login, else
-    raises an ``NotConnectedError`` when the method was not called or
-    logout method was invoked in the script.
+    An abstract class that ensure that the core security and broker's
+    authentication feature - like ``login`` and ``logout`` operations
+    are unified using the same functional call signature.
 
-    ..versionchanged:: 2024-04-02 Refactoring with sessionManager
-        A ``sessionManager`` is optional callable attribute of the
-        class which is ``None`` by default.
+    :type  username: str
+    :param username: Username or Client ID which is available from
+        from the Broker and is typically the Login ID.
 
-    .. code-block:: python
+    :type  password: str
+    :param password: Password to login to access the Broker's API, this
+        value may be different from the password you used to login to
+        the "DEMAT" account and is sometime referred as the "secret
+        key" which is provided when creating the API endpoint in the
+        Broker's API Terminal.
 
-        class NewBrokerAPI(BaseBrokerAPI):
-            ...
+    NOTE: The function does not provide runtime security to mask the
+        secrets (passwords, authentication tokens, etc.) from logging
+        into console or when the password is called via an inherited
+        function. If required, this feature must be implemented by
+        the calling functions.
 
-            def login(...) -> ...:
-                ...
-                self.sessionManager = ...()
-
-
-            def logout(...) -> ...:
-                ...
-                self.sessionManager = None
-
-            @requireLogin
-            async def fetchData(...)-> Iterable:
-                ...
-
-            @requireLogin
-            def getPositions(...) -> List[dict]:
-                ...
-
-    The decorator function checks if the underlying callable is an
-    asynchronous function, else calls the regular method.
+    REFACTOR: @requireLogin Decorator is Deprecated; Use Attributes
+        Since authentication process is handled separately using a
+        different functional approach, the @requireLogin decorator is
+        now deprecated. API should be able to a callable attribute to
+        interact with the API object.
     """
 
-    useAsync = inspect.iscoroutinefunction(func)
+    def __init__(self, username : str, password : str) -> None:
+        self.username = username
+        self.password = password
 
-    if useAsync:
-        @wraps(func)
-        async def asyncWrapper(self : "BaseBrokerAPI", *args, **kwargs) -> Any:
-            status = getattr(self, "sessionManager", None)
 
-            if not status:
-                raise NotConnectedError(
-                    f"Cannot call '{func.__name__}()', either login() "
-                    "was not called, or logout() has been called."
-                )
-            
-            return await func(self, *args, **kwargs)
-        return asyncWrapper
+    @abstractmethod
+    def login(self, *args, **kwargs) -> Any:
+        """
+        Perform login operation to the Broker's API. A broker's API
+        login may have different regulatory guidelines based on which
+        the concrete function should be modeled. Typically, for an
+        Indian Broker, SEBI is the regulatory body who provides the
+        guidelines to connect using the following parameters.
+        """
 
-    @wraps(func)
-    def syncWrapper(self : "BaseBrokerAPI", *args, **kwargs) -> Any:
-        status = getattr(self, "sessionManager", None)
+        pass
 
-        if not status:
-            raise NotConnectedError(
-                f"Cannot call '{func.__name__}()', either login() "
-                "was not called, or logout() has been called."
-            )
 
-        return func(self, *args, **kwargs)
-    return syncWrapper
+    @abstractmethod
+    def logout(self, *args, **kwargs) -> bool:
+        """
+        Perform logout operation from the Broker's API. The function
+        returns ``True`` on logout/closing API connection success,
+        else returns ``False`` and retry of ``logout()`` should be
+        defined in the calling function and may remain out of scope of
+        the concrete class.
+        """
+
+        pass
 
 
 class BaseBrokerAPI(ABC):
@@ -100,6 +102,11 @@ class BaseBrokerAPI(ABC):
     should be called in an asynchronous logic and which should not be
     called. The class must be inherited in the concrete definitions.
 
+    :type  sessionManager: Callable
+    :param sessionManager: A callable object that can connect to the
+        Broker's API to perform operations, which is typically
+        available acorss all brokers platforms.
+
     :type  maxConcurrent: int
     :param maxConcurrent: Limit the number of concurrent jobs that
         are allowed to be run in an asynchronous manner. The value is
@@ -107,27 +114,24 @@ class BaseBrokerAPI(ABC):
         to control access to a shared resource by multiple threads)
         that provides rate limitation in a production environment.
 
-    **Session Manager**
-
-    A class attribute is created in the abstract base class to handle
-    sessions. A session manager is typically available across all
-    brokers platform which can be used to interact to execute orders,
-    check current positions etc. The session manager is set to a
-    callable function when ``.login()`` is called, else is always
-    ``None`` (or when ``.logout()`` is called). If a broker does not
-    require any session manager then it is recommended to create one
-    to keep the code structure same as other brokers' services.
-
-    ..versionchanged:: 2024-04-02 Refactored status with sessionManager
-        The status object was previously designed to check if the
-        broker login is done, but is now deprecated for sessionManager
-        which is ``None`` by default, else when ``.login()`` is called
-        set to a callable method which can then be widely used.
+    :type  webSocket: Optional[Callable]
+    :type  webSocket: A bidirectional communication protocol between
+        the hosted machine and the API interface that can perform
+        various jobs using a persistent TCP connection protocol.
     """
 
-    def __init__(self, maxConcurrent : int) -> None:
-        self.semaphore = asyncio.Semaphore(maxConcurrent)
-        self.sessionManager : Optional[Callable] = None
+    def __init__(
+        self, sessionManager : Callable, maxConcurrency : int,
+        webSocket : Optional[Callable] = None
+    ) -> None:
+        self.sessionManager = sessionManager
+        self.maxConcurrency = maxConcurrency
+
+        # ? concurrency primitives to  manage access
+        self.semaphore = asyncio.Semaphore(maxConcurrency)
+
+        # ? get websocket, typically for real-time data and ordering
+        self.webSocket = webSocket
 
 
     @property
@@ -139,51 +143,6 @@ class BaseBrokerAPI(ABC):
         Typically, there is no method to validate this URL, unless an
         explicit function call is provided; which must be implemented
         in the concrete class.
-        """
-
-        pass
-
-
-    @abstractmethod
-    def login(
-        self, username : str, password : str, *args, **kwargs
-    ) -> bool:
-        """
-        Perform login operation to the Broker's API. A broker's API
-        login may have different regulatory guidelines based on which
-        the concrete function should be modeled. Typically, for an
-        Indian Broker, SEBI is the regulatory body who provides the
-        guidelines to connect using the following parameters.
-
-        :type  username: str
-        :param username: Username or Client ID which is available from
-            from the Broker and is typically the Login ID.
-
-        :type  password: str
-        :param password: Password to login to access the Broker's API,
-            this value may be different from the password you used to
-            login to the "DEMAT" account and is sometime referred as
-            the "secret key" which is provided when creating the API
-            endpoint in the Broker's API Terminal.
-
-        **Keyword Agrument(s)**
-
-        The concrete function should be able to handle and create any
-        additional keyword argument(s) that may be required for the
-        authentication process.
-        """
-
-        pass
-
-
-    @abstractmethod
-    def logout(self) -> bool:
-        """
-        Perform logout operation from the Broker's API. The function
-        returns ``True`` on logout/closing API connection success,
-        else returns ``False`` and retry of ``logout()`` should be
-        defined in the calling function and may remain out of scope of
-        the concrete class.
         """
 
         pass

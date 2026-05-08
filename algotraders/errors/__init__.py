@@ -5,9 +5,9 @@ Custom Errors/Warnings for AlgoTraders Module
 """
 
 from algotraders.errors.errors import (
-    BrokerError, UnavailableBroker, BrokerConfigurationError, NotConnectedError
+    BrokerError, UnavailableBroker, BrokerConfigurationError
 )
 
 __all__ = [
-    "BrokerError", "UnavailableBroker", "BrokerConfigurationError", "NotConnectedError"
+    "BrokerError", "UnavailableBroker", "BrokerConfigurationError"
 ]
