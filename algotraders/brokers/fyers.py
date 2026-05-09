@@ -195,18 +195,26 @@ class FyersAPI(BaseBrokerAPI):
                 Check API documentation for more details.
         """
 
-        dateRange = tuple(map(
-            lambda x : str(int(x.timestamp())), dateRange
-        )) # type: ignore
+        cont_flag : int =  kwargs.get("cont_flag", 1)
+        date_format : str = kwargs.get("date_format", "0")
+
+        # ? the data api accepts date format to be either "0" or "1"
+        # "0": accepts epoch datetime; "1": date in yyyy-mm-dd format
+        # https://myapi.fyers.in/docsv3#tag/Data-Api/paths/~1DataApi/post
+        epochConverter = lambda x : str(int(x.timestamp()))
+        dateRange = tuple(map(epochConverter, dateRange)) if \
+            date_format == "0" else tuple(map(lambda x : x.date(), dateRange))
 
         data = {
             "symbol" : symbol, "resolution" : timeframe,
             "range_from" : dateRange[0], "range_to" : dateRange[1],
-            "date_format" : kwargs.get("date_format", "0"),
-            "cont_flag" : kwargs.get("date_format", 1),
+            "date_format" : date_format, "cont_flag" : cont_flag
         }
 
-        return self.sessionManager.history(data = data) # type: ignore
+        async with self.semaphore:
+            result = self.sessionManager.history(data = data)
+
+        return result # type: ignore
 
 
     async def executeOrder(self, *args, **kwargs) -> Optional[object]:
