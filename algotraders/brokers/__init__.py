@@ -14,6 +14,12 @@ from algotraders.brokers.registry import (
     registerBroker, availableBrokers, getBrokerInterface
 )
 
+registerBroker(
+    "fyers",
+    API = "FyersAPI", AUTH = "FyersAuthentication",
+    PATH = "algotraders.brokers.fyers", REQUIRES = ["fyers_apiv3"]
+)
+
 __all__ = [
     "registerBroker", "availableBrokers", "getBrokerInterface"
 ]

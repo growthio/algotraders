@@ -35,12 +35,3 @@ class BrokerConfigurationError(BrokerError):
         super().__init__(
             f"Broker {name} is available, but {requirements} not met."
         )
-
-
-class NotConnectedError(RuntimeError):
-    """
-    The error is raised when a script tries to execute a function that
-    requires a login which was not called or logout method was called.
-    """
-
-    pass

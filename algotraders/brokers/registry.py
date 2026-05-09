@@ -23,12 +23,15 @@ decided to use ``angelone``, then only related libraries required by
 ``ImportError`` for the other Brokers' API libraries.
 """
 
+import pathlib
 import importlib
 
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, Union
 
-from algotraders.brokers.base import BaseBrokerAPI
+from algotraders.brokers.base import (
+    BaseBrokerAPI, BaseBrokerAuthentication
+)
 from algotraders.errors import (
     BrokerError, UnavailableBroker, BrokerConfigurationError
 )
@@ -41,6 +44,15 @@ class BrokerRegistryEntryPoint:
     always a frozen data class which is called during init-time option
     registrations when the module is imported.
 
+    :param API: Returns the callable API object which handles all
+        types of operations - fetching data, executing orders, etc.
+
+    :param AUTH: Authentication class for login, logout and other
+        services required by the broker.
+
+    :param PATH: Path to the file where the ``API`` and ``AUTH``
+        callables are defined.
+
     :param modulePath: Path to the submodule path which is required
         by the enduser. The module path refers to name of the ``.py``
         file under ``algotraders/modules`` directory.
@@ -48,14 +60,17 @@ class BrokerRegistryEntryPoint:
     :param unifiedClass: Name of the unified class which is to be
         imported as per the enduser's requirement.
 
-    :param requirements: List of external library/module required by
-        the selected broker - if the requirement is not satisfied then
+    :param REQUIRES: List of external library/module required by the
+        selected broker - if the requirement is not satisfied then
         ``BrokerConfigurationError`` is raised.
     """
 
-    modulePath   : str
-    unifiedClass : str
-    requirements : List[str]
+    API  : Callable
+    AUTH : Callable
+    PATH : Union[str, pathlib.Path]
+
+    # ! Check Module Requirements, Raise Custom Error
+    REQUIRES : List[str]
 
 
 BrokerRegistry: dict[str, BrokerRegistryEntryPoint] = {}
@@ -76,15 +91,7 @@ def registerBroker(brokerName : str, **kwargs) -> None:
 
     The keyword arguments are passed directly to the entry point data
     class to create an instance and register a new available broker.
-
-        * **modulePath** (*str*): Module path for the selected broker
-            under ``algotraders/brokers`` module.
-
-        * **unifiedClass** (*str*): Name of the underlying implemented
-            class to access the broker services.
-
-        * **requirements** (*list[str]*): List of external library
-            requirements to use the broker services.
+    Check :cls:`BrokerRegistryEntryPoint` documentation for details.
 
     :raises TypeError: The keyword arguments must match all the keys
         of the ``BrokerRegistryEntryPoint`` frozen data class.
@@ -103,9 +110,7 @@ def availableBrokers() -> List[str]:
     return sorted(BrokerRegistry.keys())
 
 
-def getBrokerInterface(
-        brokerName : str, *args: Any, **kwargs: Any
-    ) -> Optional[BaseBrokerAPI]:
+def getBrokerInterface(brokerName : str) -> dict[str, Callable]:
     """
     Check the system if the selected broker is available and if all
     the required libraries are installed, then finally return the
@@ -120,21 +125,25 @@ def getBrokerInterface(
     if brokerName not in available:
         raise UnavailableBroker(
             f"Broker {brokerName} is not registered, please raise a "
-            "new requirement at https://github.com/growthio/algotraders/issues/new"
+            "ticket at https://github.com/growthio/algotraders/issues/new"
         )
 
     entryPoint = BrokerRegistry[brokerName]
     try:
-        module = importlib.import_module(entryPoint.modulePath)
+        module = importlib.import_module(entryPoint.PATH)
     except ImportError:
         raise BrokerConfigurationError(
-            name = brokerName, requirements = entryPoint.requirements
+            name = brokerName, requirements = entryPoint.REQUIRES
         )
     except Exception as err:
         raise BrokerError(f"Unbounded Broker Error: {err}")
 
-    cls : Callable[..., BaseBrokerAPI] = getattr(
-        module, entryPoint.unifiedClass
+    api : Callable[..., BaseBrokerAPI] = getattr(
+        module, entryPoint.API
     )
 
-    return cls(*args, **kwargs)
+    auth : Callable[..., BaseBrokerAuthentication] = getattr(
+        module, entryPoint.AUTH
+    )
+
+    return dict(API = api, AUTH = auth)
