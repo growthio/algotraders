@@ -47,9 +47,6 @@ Homepage = "https://github.com/growthio/algotraders"
 Repository = "https://github.com/growthio/algotraders"
 Issues = "https://github.com/growthio/algotraders/issues"
 
-[project.entry-points."flake8.extension"]
-BL = "algotraders.rules._flake8:BlankLinesChecker"
-
 [tool.setuptools.packages.find]
 exclude = ["tests*", "examples*"]
 

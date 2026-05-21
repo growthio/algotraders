@@ -38,9 +38,4 @@
         # E251 unexpected spaces around keyword / parameter equals
         E251,
         # E261 at least two spaces before inline comment
-        E261,
-        # ; ! Ignored for BL001 and BL002 Custom Rule Enforcement
-        # E301 : Expected 2 blank lines, found 0
-        # E302 : Expected 2 blank lines, found 0
-        # E303 : Too many blank lines (3)
-        E301, E302, E303
+        E261
