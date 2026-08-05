@@ -40,11 +40,13 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
-# ? pydantic is the only runtime dependency, it carries the normalized
-# data contract that the host application consumes directly as a
-# FastAPI response model. Broker SDKs stay optional, see extras below.
+# ? pydantic carries the normalized data contract that the host consumes
+# directly as a FastAPI response model, and pydantic-settings resolves
+# credentials from the environment with a dotenv fallback. Broker SDKs
+# stay optional, see the extras below.
 dependencies = [
-    "pydantic>=2.7"
+    "pydantic>=2.7",
+    "pydantic-settings>=2.2"
 ]
 
 [project.optional-dependencies]
