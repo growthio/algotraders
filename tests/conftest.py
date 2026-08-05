@@ -44,6 +44,66 @@ BLOCKED_NETWORK_MESSAGE = (
     "recorded payload under tests/data instead of a live broker call"
 )
 
+# ? loopback stays reachable so asyncio's self-pipe and any local test
+# server keep working. No broker lives on 127.0.0.1
+LOOPBACK_HOSTS : FrozenSet[str] = frozenset({
+    "127.0.0.1", "::1", "localhost", "0.0.0.0", ""
+})
+
+# ? only the "live" suite reads this, every other test runs against
+# scrubbed throwaway values and never sees a real credential
+ENVIRONMENT_FILE = pathlib.Path(__file__).resolve().parent.parent / ".env.local"
+
+
+def loadEnvironmentFile(
+    path : pathlib.Path, monkeypatch : pytest.MonkeyPatch
+) -> Dict[str, str]:
+    """
+    Parse a ``KEY=value`` dotenv file and export it for one test.
+
+    The library deliberately has no dotenv dependency: configuration is
+    read through :func:`os.getenv` so a production host can inject
+    credentials from its own secret manager rather than a file on disk.
+    That leaves local ``live`` runs with nothing to load ``.env.local``,
+    which is what this helper covers. The parser is intentionally small
+    and handles only what the template uses - comments, blank lines and
+    a single optional layer of surrounding quotes.
+
+    :type  path: pathlib.Path
+    :param path: Dotenv file to read. A missing file skips the test
+        rather than failing it, since ``.env.local`` is git ignored and
+        will legitimately be absent on a fresh clone.
+
+    :type  monkeypatch: pytest.MonkeyPatch
+    :param monkeypatch: Used to export the values, so the process
+        environment is restored when the test finishes.
+
+    :rtype:   Dict[str, str]
+    :returns: The parsed ``name -> value`` mapping that was exported.
+    """
+
+    if not path.is_file():
+        pytest.skip(
+            f"live tests need {path.name}; copy .env.example to it and "
+            "fill in your own broker credentials"
+        )
+
+    values : Dict[str, str] = {}
+
+    for line in path.read_text(encoding = "utf-8").splitlines():
+        entry = line.strip()
+
+        if not entry or entry.startswith("#") or "=" not in entry:
+            continue
+
+        name, _, value = entry.partition("=")
+        values[name.strip()] = value.strip().strip('"').strip("'")
+
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+
+    return values
+
 
 class VendorImportBlocker:
     """
@@ -126,16 +186,37 @@ def noNetwork(
     if "live" in request.keywords:
         return
 
-    def blockedConnect(self : socket.socket, address : Any) -> None:
+    originalConnect = socket.socket.connect
+    originalConnectEx = socket.socket.connect_ex
+
+    def isLoopback(address : Any) -> bool:
+        # ! asyncio builds its self-pipe over a loopback socketpair on
+        # Windows, so blocking every connect breaks the event loop
+        # itself rather than the broker call we care about
+        host = address[0] if isinstance(address, (tuple, list)) else address
+
+        return host in LOOPBACK_HOSTS
+
+    def blockedConnect(self : socket.socket, address : Any) -> Any:
+        if isLoopback(address):
+            return originalConnect(self, address)
+
+        raise RuntimeError(f"{BLOCKED_NETWORK_MESSAGE} (target: {address})")
+
+    def blockedConnectEx(self : socket.socket, address : Any) -> Any:
+        if isLoopback(address):
+            return originalConnectEx(self, address)
+
         raise RuntimeError(f"{BLOCKED_NETWORK_MESSAGE} (target: {address})")
 
     monkeypatch.setattr(socket.socket, "connect", blockedConnect)
-    monkeypatch.setattr(socket.socket, "connect_ex", blockedConnect)
+    monkeypatch.setattr(socket.socket, "connect_ex", blockedConnectEx)
 
 
 @pytest.fixture(autouse = True)
 def dummyEnvironment(
-    tmp_path : pathlib.Path, monkeypatch : pytest.MonkeyPatch
+    request : pytest.FixtureRequest, tmp_path : pathlib.Path,
+    monkeypatch : pytest.MonkeyPatch
 ) -> Dict[str, str]:
     """
     Replace the whole ``ALGOTRADERS_*`` environment with throwaway
@@ -146,10 +227,16 @@ def dummyEnvironment(
     exported, and without this the token store fixtures would read - and
     could overwrite - that developer's live session file.
 
+    Tests marked ``live`` invert this. They are opt-in, they genuinely
+    need a broker, so they load ``.env.local`` instead of being scrubbed.
+
     :rtype:   Dict[str, str]
     :returns: The environment mapping that was installed, so a test can
         assert against the same values it was configured with.
     """
+
+    if "live" in request.keywords:
+        return loadEnvironmentFile(ENVIRONMENT_FILE, monkeypatch)
 
     for name in list(os.environ):
         if name.startswith("ALGOTRADERS_"):
