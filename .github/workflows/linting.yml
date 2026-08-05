@@ -5,9 +5,9 @@ name: Code Linting (.flake8)
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, "refactor/**", "feature/**" ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, "refactor/**" ]
 
 jobs:
   build:
@@ -32,5 +32,6 @@ jobs:
         # WARNING: the project uses partial PEP-8; check .flake8 config
         # ? Stop the Build if there are Syntax/Undefined Names Error(s)
         flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # ? Exit Zero: Treats the Erros as Warnings; GH Editor is 127 Character Wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        # ! Gating since the microservice refactor. The previous pass used
+        # --exit-zero, so .flake8 was documentation rather than a check.
+        flake8 . --count --statistics

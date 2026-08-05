@@ -27,7 +27,7 @@ import pathlib
 import importlib
 
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Union
+from typing import Callable, List, Union
 
 from algotraders.brokers.base import (
     BaseBrokerAPI, BaseBrokerAuthentication

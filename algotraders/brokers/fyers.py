@@ -195,15 +195,20 @@ class FyersAPI(BaseBrokerAPI):
                 Check API documentation for more details.
         """
 
-        cont_flag : int =  kwargs.get("cont_flag", 1)
+        cont_flag : int = kwargs.get("cont_flag", 1)
         date_format : str = kwargs.get("date_format", "0")
 
         # ? the data api accepts date format to be either "0" or "1"
         # "0": accepts epoch datetime; "1": date in yyyy-mm-dd format
         # https://myapi.fyers.in/docsv3#tag/Data-Api/paths/~1DataApi/post
-        epochConverter = lambda x : str(int(x.timestamp()))
-        dateRange = tuple(map(epochConverter, dateRange)) if \
-            date_format == "0" else tuple(map(lambda x : x.date(), dateRange))
+        def epochConverter(value : dt.datetime) -> str:
+            return str(int(value.timestamp()))
+
+        def dateConverter(value : dt.datetime) -> dt.date:
+            return value.date()
+
+        converter = epochConverter if date_format == "0" else dateConverter
+        dateRange = tuple(map(converter, dateRange))
 
         data = {
             "symbol" : symbol, "resolution" : timeframe,
