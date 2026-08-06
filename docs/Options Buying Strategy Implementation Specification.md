@@ -1,6 +1,28 @@
 # Nifty 50 & Bank Nifty — Intraday Options-Buying Algorithmic Trading System
 ## Implementation Specification (Handoff Document)
 
+> **⚠️ SUPERSEDED IN PART - READ THIS FIRST (added 2026-08-06).**
+>
+> This document predates the microservice refactor and its Sections 6 and 7 prescribe a **competing broker layer**:
+> `snake_case` naming, a synchronous `BrokerAdapter`, `place_spread`, `OrderResult`, and credentials living in a
+> `config.py` constant. That layer no longer exists and must not be built. **`CLAUDE.md` is the source of truth for
+> anything touching brokers, data, orders or configuration.**
+>
+> The strategy content, Sections 2, 3, 8 through 13, remains valid and useful. Map the interface names as follows:
+>
+> | This Document | The Library |
+> | :---: | :---: |
+> | `brokers/base.py::BrokerAdapter` | `algotraders.brokers.base.BaseBrokerAPI` (async) |
+> | `OrderResult` | `algotraders.models.OrderResponse` |
+> | `place_spread` | reserved `placeBasket` seam, **not implemented** |
+> | `core/strategy.py::Strategy` | host application, not this package |
+> | credentials in `config.py` | `ALGOTRADERS_*` environment variables via `algotraders.config` |
+>
+> Two further corrections. Multi-leg orders are deliberately out of scope: Fyers exposes `place_multileg_order` and Kite
+> does not, so one `placeOrder` signature cannot express a spread honestly. And every broker call is a coroutine, so any
+> reference code here that calls a broker synchronously will block the event loop and must be rewritten around
+> `BlockingCaller`.
+
 > **Purpose of this document.** This is a complete, self-contained build specification for an automated intraday options-*buying* system for the Indian indices Nifty 50 and Bank Nifty. It is written to be handed directly to a coding agent (e.g. Claude) to implement against an existing Python codebase. It contains the objective, honest market findings, hard constraints, the full list of required data points, the system architecture, all reference code, the 15 strategy specifications, the risk/capital framework, the cost model, and the validation gates that must pass before any live capital is deployed.
 >
 > **Read Sections 2 and 3 before writing any code.** They contain non-negotiable findings and 2026 market-structure facts that change which strategies are even viable.

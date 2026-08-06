@@ -289,17 +289,42 @@ The microservice refactor lands phase by phase on `refactor/microservice`. Each 
 and test green on its own.
 
   - [x] Phase 0 - repository hygiene, dependency policy, gating CI, pytest harness, this document
-  - [ ] Phase 1 - error tree, redacting logger, configuration, clock
-  - [ ] Phase 2 - normalized Pydantic DTOs
-  - [ ] Phase 3 - rate limiter, retry, chunking, blocking executor
-  - [ ] Phase 4 - token store, `BrokerSession`, `initialize`
-  - [ ] Phase 5 - instrument resolution and cache
-  - [ ] Phase 6 - broker ABCs, registry hardening, fake broker, Fyers data
-  - [ ] Phase 7 - Fyers trading
-  - [ ] Phase 8 - streaming layer and Fyers stream
-  - [ ] Phase 9 - Zerodha Kite
-  - [ ] Phase 10 - Kite streaming
-  - [ ] Phase 11 - FastAPI transport
-  - [ ] Phase 12 - examples, documentation, version bump
+  - [x] Phase 1 - error tree, redacting logger, configuration, clock
+  - [x] Phase 2 - normalized Pydantic DTOs
+  - [x] Phase 3 - rate limiter, retry, chunking, blocking executor
+  - [x] Phase 4 - token store, `BrokerSession`, `initialize`
+  - [x] Phase 5 - instrument resolution and cache
+  - [x] Phase 6 - broker ABCs, registry hardening, Fyers data
+  - [x] Phase 7 - layering enforcement and Fyers trading
+  - [x] Phase 8 - streaming layer and Fyers stream
+  - [x] Phase 9 - Zerodha Kite
+  - [x] Phase 10 - Kite streaming
+  - [x] Phase 11 - FastAPI transport
+  - [x] Phase 12 - examples, documentation, version bump
+
+## Things Discovered During the Refactor
+
+Recorded because each cost real debugging time and none is obvious from reading the code afterwards.
+
+  * **The layering rule needs a test, not a paragraph.** `models/market.py` imported `core.clock` for a timezone
+    helper, which inverted the documented direction. Nothing broke until `core/__init__.py` grew one more export, at
+    which point the cycle surfaced as an `ImportError` in an unrelated test module and blamed the wrong file. The
+    timezone primitives now live in `models/timezone.py` at the bottom of the graph, and
+    `tests/unit/test_imports.py::test_layeringRulesAreRespected` walks the source of each package to enforce it.
+  * **Response validation must run inside the retried operation.** Validating after `caller.call` returned put the
+    error classification outside the retry boundary, so a throttled response was never retried at all, which defeats
+    the entire reason 429 is mapped to a retryable type. Both broker surfaces now validate within the callable they
+    hand to the caller.
+  * **Token bucket arithmetic needs an epsilon.** Sleeping for exactly `timeToAvailable()` credits back exactly the
+    deficit only in exact arithmetic. In floating point the balance lands at `0.9999999999999998`, which reads as "not
+    yet" and sends `acquire` round again for a meaningless sub-nanosecond sleep. That produced 26 sleeps for 5
+    acquisitions and would have polluted every downstream timing assertion.
+  * **A broker package cannot eagerly import its own submodules.** The registry reads a broker's capabilities from its
+    `limits.py` during registration, and `limits.py` deliberately has no vendor import, but importing it executes the
+    package `__init__` which would drag the SDK in. Both broker packages resolve their concrete classes through a
+    PEP 562 module level `__getattr__`.
+  * **Blocking the loopback interface breaks asyncio itself.** The `noNetwork` fixture originally blocked every
+    outbound connect, including the socketpair `ProactorEventLoop` uses for its self-pipe, so every coroutine test
+    errored on Windows before it ran.
 
 </div>
