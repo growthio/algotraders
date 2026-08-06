@@ -51,7 +51,7 @@ from algotraders.brokers.fyers import limits
 
 __all__ = [
     "limits", "FyersAuthentication", "FyersAPI", "FyersInstrumentResolver",
-    "appIdHash"
+    "FyersStream", "appIdHash"
 ]
 
 # ? name to defining submodule, resolved on first attribute access
@@ -59,7 +59,8 @@ _LAZY_EXPORTS = {
     "FyersAuthentication" : "algotraders.brokers.fyers.auth",
     "appIdHash" : "algotraders.brokers.fyers.auth",
     "FyersAPI" : "algotraders.brokers.fyers.api",
-    "FyersInstrumentResolver" : "algotraders.brokers.fyers.symbols"
+    "FyersInstrumentResolver" : "algotraders.brokers.fyers.symbols",
+    "FyersStream" : "algotraders.brokers.fyers.stream"
 }
 
 

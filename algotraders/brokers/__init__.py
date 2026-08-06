@@ -33,7 +33,7 @@ from algotraders.brokers.registry import (
 registerBroker(
     "fyers",
     API = "FyersAPI", AUTH = "FyersAuthentication",
-    RESOLVER = "FyersInstrumentResolver",
+    RESOLVER = "FyersInstrumentResolver", STREAM = "FyersStream",
     PATH = "algotraders.brokers.fyers", REQUIRES = ["fyers_apiv3"],
     CAPABILITIES = fyersLimits.CAPABILITIES, EXTRA = fyersLimits.PIP_EXTRA
 )
