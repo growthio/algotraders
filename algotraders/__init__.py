@@ -15,7 +15,13 @@ __version__ = "v0.0.1.dev0"
 
 # init-time options registrations, use api.py for imports
 from algotraders.api import (
-    brokers, strategies
+    errors, models, brokers, strategies,
+    BrokerSession, initialize, initializeSync,
+    availableBrokers, getBrokerInterface, registerBroker
 )
 
-__all__ = ["brokers", "strategies"]
+__all__ = [
+    "errors", "models", "brokers", "strategies",
+    "BrokerSession", "initialize", "initializeSync",
+    "availableBrokers", "getBrokerInterface", "registerBroker"
+]
