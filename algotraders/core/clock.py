@@ -33,17 +33,17 @@ anything that measures must use :meth:`BaseClock.monotonic` rather than
 import time
 import asyncio
 import datetime as dt
-import zoneinfo as zi
 
 from abc import ABC, abstractmethod
 from typing import Optional
 
-IST = zi.ZoneInfo("Asia/Kolkata")
-
-# ? NSE and BSE regular session, used for the market-hours helpers that
-# the stream supervisor needs to decide whether silence is suspicious
-MARKET_OPEN = dt.time(9, 15)
-MARKET_CLOSE = dt.time(15, 30)
+# ? the timezone primitives live under models, which sits below core in
+# the dependency graph, because the models validate timestamps and would
+# otherwise have to import core and create a cycle. Re-exported here so
+# `from algotraders.core.clock import IST` keeps working
+from algotraders.models.timezone import (
+    IST, MARKET_OPEN, MARKET_CLOSE, toIST, fromEpoch, toEpoch
+)
 
 
 class BaseClock(ABC):
@@ -221,62 +221,6 @@ class SystemClock(BaseClock):
 
         if seconds > 0:
             await asyncio.sleep(seconds)
-
-
-def toIST(value : dt.datetime) -> dt.datetime:
-    """
-    Convert a datetime to ``Asia/Kolkata``, treating a naive value as
-    already being IST.
-
-    Assuming IST for naive input is the safe reading in this codebase:
-    every naive datetime in the trading domain, whether typed by an
-    operator or parsed from a broker payload, is an Indian market
-    timestamp. Assuming UTC instead would silently shift data by five
-    and a half hours.
-
-    :type  value: dt.datetime
-    :param value: The datetime to convert.
-
-    :rtype:   dt.datetime
-    :returns: The same moment expressed in IST, always timezone aware.
-    """
-
-    if value.tzinfo is None:
-        return value.replace(tzinfo = IST)
-
-    return value.astimezone(IST)
-
-
-def fromEpoch(seconds : float) -> dt.datetime:
-    """
-    Convert a Unix epoch value to a timezone aware IST datetime.
-
-    Broker candle payloads carry epoch seconds. Converting them with a
-    bare :meth:`datetime.fromtimestamp` uses the host's local zone,
-    which is the defect this helper exists to prevent.
-
-    :type  seconds: float
-    :param seconds: Seconds since the Unix epoch, UTC based.
-
-    :rtype:   dt.datetime
-    :returns: The corresponding IST datetime.
-    """
-
-    return dt.datetime.fromtimestamp(seconds, tz = dt.timezone.utc).astimezone(IST)
-
-
-def toEpoch(value : dt.datetime) -> int:
-    """
-    Convert a datetime to whole epoch seconds, normalising to IST first.
-
-    :type  value: dt.datetime
-    :param value: The datetime to convert. Naive values are read as IST.
-
-    :rtype:   int
-    :returns: Seconds since the Unix epoch, truncated.
-    """
-
-    return int(toIST(value).timestamp())
 
 
 __all__ = [

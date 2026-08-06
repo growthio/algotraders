@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import Field, field_validator
 
-from algotraders.core.clock import toIST
+from algotraders.models.timezone import toIST
 from algotraders.models.base import AlgoTradersModel
 from algotraders.models.enums import StreamMode, Timeframe
 

@@ -28,7 +28,7 @@ from typing import Any, Dict, Optional
 
 from pydantic import Field, SecretStr, field_validator
 
-from algotraders.core.clock import IST, toIST
+from algotraders.models.timezone import IST, toIST
 from algotraders.models.base import AlgoTradersModel
 from algotraders.models.market import requireAwareIST
 
