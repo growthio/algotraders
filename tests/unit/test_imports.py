@@ -37,7 +37,11 @@ def test_importsWithoutVendorSDK(
 
     with vendorSDKBlocked() as package:
         assert package.__version__
-        assert package.brokers.availableBrokers() == ["fyers"]
+
+        # ? every registered broker is discoverable even though none of
+        # their SDKs can be imported, which is the whole promise of
+        # storing entry points as strings
+        assert package.brokers.availableBrokers() == ["fyers", "kite"]
 
 
 def test_noVendorSDKLoadedAtImportTime(

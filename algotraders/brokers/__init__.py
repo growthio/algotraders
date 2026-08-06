@@ -22,6 +22,7 @@ asks for that broker, which is what lets a Kite only deployment install
 """
 
 from algotraders.brokers.fyers import limits as fyersLimits
+from algotraders.brokers.kite import limits as kiteLimits
 
 from algotraders.brokers.registry import (
     Broker, BrokerRegistry, BrokerRegistryEntryPoint,
@@ -36,6 +37,14 @@ registerBroker(
     RESOLVER = "FyersInstrumentResolver", STREAM = "FyersStream",
     PATH = "algotraders.brokers.fyers", REQUIRES = ["fyers_apiv3"],
     CAPABILITIES = fyersLimits.CAPABILITIES, EXTRA = fyersLimits.PIP_EXTRA
+)
+
+registerBroker(
+    "kite",
+    API = "KiteAPI", AUTH = "KiteAuthentication",
+    RESOLVER = "KiteInstrumentResolver", STREAM = "KiteStream",
+    PATH = "algotraders.brokers.kite", REQUIRES = ["kiteconnect"],
+    CAPABILITIES = kiteLimits.CAPABILITIES, EXTRA = kiteLimits.PIP_EXTRA
 )
 
 __all__ = [
