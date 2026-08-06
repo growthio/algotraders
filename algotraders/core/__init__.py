@@ -45,6 +45,10 @@ from algotraders.core.executor import (
 
 from algotraders.core.profile import MemoryProfile, traceMemoryUsage
 
+from algotraders.core.resample import (
+    aggregateCandles, bucketFor, SUPPORTED_AGGREGATIONS
+)
+
 __all__ = [
     "IST", "MARKET_OPEN", "MARKET_CLOSE",
     "BaseClock", "SystemClock",
@@ -60,5 +64,7 @@ __all__ = [
 
     "BlockingCaller", "DEFAULT_MAX_CONCURRENCY", "THREAD_NAME_PREFIX",
 
-    "MemoryProfile", "traceMemoryUsage"
+    "MemoryProfile", "traceMemoryUsage",
+
+    "aggregateCandles", "bucketFor", "SUPPORTED_AGGREGATIONS"
 ]
