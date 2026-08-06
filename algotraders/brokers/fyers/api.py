@@ -27,9 +27,9 @@ entirely.
 
 import datetime as dt
 
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from algotraders.brokers.base import BaseBrokerData
+from algotraders.brokers.base import BaseBrokerAPI
 from algotraders.brokers.fyers import limits, mapper
 from algotraders.core.chunking import clampToNow, splitDateRange
 from algotraders.core.clock import toIST
@@ -38,6 +38,8 @@ from algotraders.logger import getLogger
 from algotraders.models.enums import EndpointClass, Timeframe
 from algotraders.models.instrument import Instrument
 from algotraders.models.market import Candle, Quote
+from algotraders.models.orders import OrderRequest, OrderResponse
+from algotraders.models.portfolio import Holding, Position
 
 logger = getLogger(__name__)
 
@@ -49,7 +51,7 @@ DATE_FORMAT = "1"
 QUOTE_BATCH_SIZE = 50
 
 
-class FyersAPI(BaseBrokerData):
+class FyersAPI(BaseBrokerAPI):
     """
     Implementation of concrete method to access FYERS API services for
     fetching historical and real time market data.
@@ -250,6 +252,258 @@ class FyersAPI(BaseBrokerData):
         )
 
         return aggregateCandles(daily, timeframe)
+
+
+    # -----------------------------------------------------------------
+    # Trading
+    # -----------------------------------------------------------------
+    # ! every method below moves real money and is charged against
+    # EndpointClass.ORDER, which the executor forces to a single attempt
+
+
+    async def placeOrder(self, request : OrderRequest) -> OrderResponse:
+        """
+        Submit an order to the exchange.
+
+        The request has already passed the local fat finger checks in
+        :class:`~algotraders.models.orders.OrderRequest`, so this maps
+        and dispatches without re-validating.
+
+        :raises OrderRejected: Fyers refused the order, carrying the
+            broker's own message.
+
+        :rtype:   OrderResponse
+        :returns: The acknowledgement, whose ``orderId`` is the handle
+            for any later modify or cancel.
+        """
+
+        payload = mapper.toOrderPayload(request)
+
+        response = await self.caller.call(
+            EndpointClass.ORDER, self.__placeOrder__, payload
+        )
+
+        acknowledged = mapper.toOrderResponse(response)
+
+        logger.info(
+            "placed %s %s x%d as order %s",
+            request.side.value, request.instrument.brokerSymbol,
+            request.quantity, acknowledged.orderId
+        )
+
+        return acknowledged
+
+
+    def __placeOrder__(self, payload : Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Call the vendor placement endpoint and validate the response.
+        """
+
+        return mapper.ensureSuccess(
+            self.sessionManager.place_order(data = payload),
+            context = f"place_order {payload.get('symbol')}"
+        )
+
+
+    async def modifyOrder(
+        self, orderId : str, quantity : Optional[int] = None,
+        limitPrice : Optional[float] = None,
+        triggerPrice : Optional[float] = None, **kwargs : Any
+    ) -> OrderResponse:
+        """
+        Amend a working order, leaving omitted fields unchanged.
+
+        :rtype:   OrderResponse
+        :returns: The updated order state.
+        """
+
+        payload : Dict[str, Any] = {"id" : orderId}
+
+        if quantity is not None:
+            payload["qty"] = quantity
+
+        if limitPrice is not None:
+            payload["limitPrice"] = float(limitPrice)
+
+        if triggerPrice is not None:
+            payload["stopPrice"] = float(triggerPrice)
+
+        payload.update(kwargs)
+
+        response = await self.caller.call(
+            EndpointClass.ORDER, self.__modifyOrder__, payload
+        )
+
+        return mapper.toOrderResponse(response, orderId = orderId)
+
+
+    def __modifyOrder__(self, payload : Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Call the vendor modify endpoint and validate the response.
+        """
+
+        return mapper.ensureSuccess(
+            self.sessionManager.modify_order(data = payload),
+            context = f"modify_order {payload.get('id')}"
+        )
+
+
+    async def cancelOrder(self, orderId : str) -> OrderResponse:
+        """
+        Cancel a working order.
+
+        :rtype:   OrderResponse
+        :returns: The cancelled order state.
+        """
+
+        response = await self.caller.call(
+            EndpointClass.ORDER, self.__cancelOrder__, orderId
+        )
+
+        return mapper.toOrderResponse(response, orderId = orderId)
+
+
+    def __cancelOrder__(self, orderId : str) -> Dict[str, Any]:
+        """
+        Call the vendor cancel endpoint and validate the response.
+        """
+
+        return mapper.ensureSuccess(
+            self.sessionManager.cancel_order(data = {"id" : orderId}),
+            context = f"cancel_order {orderId}"
+        )
+
+
+    async def fetchOrders(self) -> List[OrderResponse]:
+        """
+        Retrieve the day's order book.
+
+        A rejected row is reported rather than raised: the caller asked
+        for the book, and one rejection should not hide the rest of it.
+
+        :rtype:   List[OrderResponse]
+        :returns: Every order placed today.
+        """
+
+        payload = await self.caller.call(
+            EndpointClass.PORTFOLIO, self.__orderBook__
+        )
+
+        orders : List[OrderResponse] = []
+
+        for row in payload.get("orderBook") or []:
+            try:
+                orders.append(mapper.toOrderResponse(row))
+            except Exception as error:
+                logger.debug(
+                    "order book row reported a rejection: %s", error
+                )
+
+                orders.append(OrderResponse(
+                    orderId = str(row.get("id") or "unknown"),
+                    statusMessage = row.get("message"),
+                    source = mapper.SOURCE, raw = dict(row)
+                ))
+
+        return orders
+
+
+    def __orderBook__(self) -> Dict[str, Any]:
+        """
+        Call the vendor order book endpoint and validate the response.
+        """
+
+        return mapper.ensureSuccess(
+            self.sessionManager.orderbook(), context = "orderbook"
+        )
+
+
+    async def fetchPositions(self) -> List[Position]:
+        """
+        Retrieve open positions in the trading book.
+
+        :rtype:   List[Position]
+        :returns: Positions with short exposure carried as a negative
+            quantity. Fyers keeps zero quantity rows for the rest of the
+            session, so a caller wanting live exposure filters on
+            ``isFlat``.
+        """
+
+        payload = await self.caller.call(
+            EndpointClass.PORTFOLIO, self.__positions__
+        )
+
+        return [
+            mapper.toPosition(row, await self.__canonicalKey__(row))
+            for row in payload.get("netPositions") or []
+        ]
+
+
+    def __positions__(self) -> Dict[str, Any]:
+        """
+        Call the vendor positions endpoint and validate the response.
+        """
+
+        return mapper.ensureSuccess(
+            self.sessionManager.positions(), context = "positions"
+        )
+
+
+    async def fetchHoldings(self) -> List[Holding]:
+        """
+        Retrieve settled stock in the demat account.
+
+        :rtype:   List[Holding]
+        :returns: Holdings, with the sellable quantity separated from
+            the total where Fyers reports it.
+        """
+
+        payload = await self.caller.call(
+            EndpointClass.PORTFOLIO, self.__holdings__
+        )
+
+        return [
+            mapper.toHolding(row, await self.__canonicalKey__(row))
+            for row in payload.get("holdings") or []
+        ]
+
+
+    def __holdings__(self) -> Dict[str, Any]:
+        """
+        Call the vendor holdings endpoint and validate the response.
+        """
+
+        return mapper.ensureSuccess(
+            self.sessionManager.holdings(), context = "holdings"
+        )
+
+
+    async def __canonicalKey__(self, row : Dict[str, Any]) -> str:
+        """
+        Resolve a vendor portfolio row back to a canonical key.
+
+        Falls back to the raw vendor symbol when no resolver is attached
+        or the symbol is unknown. Losing the whole portfolio because one
+        delisted holding no longer appears in the symbol master would be
+        a poor trade.
+
+        :rtype:   str
+        :returns: The canonical instrument key, or the vendor symbol.
+        """
+
+        symbol = str(row.get("symbol") or row.get("id") or "unknown")
+
+        if self.resolver is None:
+            return symbol
+
+        try:
+            instrument = await self.resolver.resolveBrokerSymbol(symbol)
+
+            return instrument.instrumentKey
+        except Exception:
+            logger.debug("could not resolve portfolio symbol %r", symbol)
+
+            return symbol
 
 
 def _formatDate(moment : dt.datetime) -> str:
