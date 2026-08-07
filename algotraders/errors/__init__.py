@@ -22,6 +22,7 @@ from algotraders.errors.errors import (
     AuthenticationError,
     InvalidCredentials,
     AuthorizationRequired,
+    InvalidLoginState,
     TokenExpiredError,
 
     InstrumentError,
@@ -53,6 +54,7 @@ __all__ = [
     "AuthenticationError",
     "InvalidCredentials",
     "AuthorizationRequired",
+    "InvalidLoginState",
     "TokenExpiredError",
 
     "InstrumentError",

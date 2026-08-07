@@ -225,10 +225,40 @@ async def health() -> Dict[str, Any]:
     }
 
 
+async def requireUser(
+    authorization : Optional[str] = fastapi.Header(default = None)
+) -> str:
+    """
+    Stand-in for the host's real authentication.
+
+    Replace this with whatever the application already uses - a session
+    cookie, a JWT, an API key. What matters is that **something** guards
+    these routes: they expose positions, holdings, the order book and a
+    login URL carrying the application's client id.
+
+    :raises HTTPException: 401 when the caller is not authenticated.
+
+    :rtype:   str
+    :returns: The authenticated principal.
+    """
+
+    if not authorization:
+        raise HTTPException(status_code = 401, detail = "authentication required")
+
+    return authorization
+
+
 # ? the bundled router is optional. Mounting it gives the frontend the
-# read surface for free; trading stays off unless explicitly enabled
+# read surface for free; trading stays off unless explicitly enabled.
+# ! the auth dependency is mandatory - createRouter refuses to build
+# without one, because an unguarded mount publishes an authenticated
+# broker session to anyone who can reach the port
 app.include_router(
-    createRouter(sessionProvider = getSession, enableTrading = False)
+    createRouter(
+        sessionProvider = getSession,
+        dependencies = [Depends(requireUser)],
+        enableTrading = False
+    )
 )
 
 installExceptionHandlers(app)

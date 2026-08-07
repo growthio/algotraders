@@ -185,10 +185,45 @@ class FileTokenStore(BaseTokenStore):
 
     def __init__(
         self, directory : Union[str, pathlib.Path],
-        fileMode : int = 0o600
+        fileMode : int = 0o600, directoryMode : int = 0o700
     ) -> None:
         self.directory = pathlib.Path(directory)
         self.fileMode = fileMode
+        self.directoryMode = directoryMode
+
+
+    def __prepareDirectory__(self) -> None:
+        """
+        Create the token directory owner-only, tightening it if it
+        already exists more permissively.
+
+        A world readable directory undoes the 0600 on the files inside
+        it for anything that walks the tree, and a world *writable* one
+        invites the substitution attack the identity check in
+        :meth:`read` now catches.
+        """
+
+        self.directory.mkdir(
+            parents = True, exist_ok = True, mode = self.directoryMode
+        )
+
+        try:
+            os.chmod(self.directory, self.directoryMode)
+        except OSError as error:
+            logger.debug(
+                "could not tighten token directory: %s", type(error).__name__
+            )
+
+        if os.name == "nt":
+            # ! chmod does not touch an NTFS DACL, so the mode above is
+            # cosmetic on Windows. Say so once rather than let an
+            # operator assume the directory is protected
+            logger.warning(
+                "token directory %s is not access-restricted on Windows; "
+                "FileTokenStore is a development convenience, use a "
+                "BaseTokenStore over your own database in production",
+                self.directory
+            )
 
 
     @classmethod
@@ -242,8 +277,7 @@ class FileTokenStore(BaseTokenStore):
 
         try:
             record = json.loads(path.read_text(encoding = "utf-8"))
-
-            return TokenBundle.fromStorage(record)
+            bundle = TokenBundle.fromStorage(record)
         except Exception as error:
             logger.warning(
                 "discarding unreadable token file %s: %s",
@@ -251,6 +285,21 @@ class FileTokenStore(BaseTokenStore):
             )
 
             return None
+
+        # ! the filename is derived from a hash, so it is an index and
+        # not a proof. Without this check the file at a given path is
+        # trusted to be the session it claims, and anyone able to write
+        # into the token directory can substitute their own bundle and
+        # have this process trade their account
+        if bundle.brokerName != brokerName or bundle.clientId != clientId:
+            logger.warning(
+                "token file %s does not belong to the requested session, "
+                "discarding", path.name
+            )
+
+            return None
+
+        return bundle
 
 
     def write(self, bundle : TokenBundle) -> None:
@@ -263,7 +312,7 @@ class FileTokenStore(BaseTokenStore):
         old bundle or the new one, never a half written file.
         """
 
-        self.directory.mkdir(parents = True, exist_ok = True)
+        self.__prepareDirectory__()
 
         path = self.pathFor(bundle.brokerName, bundle.clientId)
         payload = json.dumps(bundle.toStorage(), indent = 2)

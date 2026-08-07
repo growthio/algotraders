@@ -32,10 +32,13 @@ import datetime as dt
 
 from typing import Any, Awaitable, Callable, List, Optional, Sequence
 
+from algotraders.auth.state import (
+    BaseLoginStateStore, MemoryLoginStateStore
+)
 from algotraders.errors import (
     AlgoTradersError, AuthorizationRequired, DataSubscriptionRequired,
-    InstrumentNotFound, InvalidOrder, MissingDependency, OrderRejected,
-    RateLimitExceeded, TokenExpiredError, UnsupportedTimeframe
+    InstrumentNotFound, InvalidLoginState, InvalidOrder, MissingDependency,
+    OrderRejected, RateLimitExceeded, TokenExpiredError, UnsupportedTimeframe
 )
 from algotraders.logger import getLogger
 from algotraders.models.auth import LoginChallenge, SessionStatus
@@ -117,7 +120,9 @@ def createRouter(
     prefix : str = "/algotraders",
     tags : Optional[List[str]] = None,
     dependencies : Optional[Sequence[Any]] = None,
-    enableTrading : bool = False
+    enableTrading : bool = False,
+    stateStore : Optional[BaseLoginStateStore] = None,
+    allowUnauthenticated : bool = False
 ) -> "APIRouter":
     """
     Build a router exposing the session's surface.
@@ -125,6 +130,14 @@ def createRouter(
     :type  sessionProvider: SessionProvider
     :param sessionProvider: FastAPI dependency returning a
         :class:`~algotraders.auth.session.BrokerSession`.
+
+    :type  dependencies: Optional[Sequence[Any]]
+    :param dependencies: Router level FastAPI dependencies, which is
+        where authentication belongs. **Required.** These routes expose
+        an authenticated broker session: positions, holdings, the order
+        book and a login URL carrying the application's client id. A
+        router mounted without an auth dependency publishes all of that
+        to anyone who can reach the port.
 
     :type  enableTrading: bool
     :param enableTrading: Whether order routes are registered. Defaults
@@ -134,22 +147,60 @@ def createRouter(
         unarmed deployment returns 404 rather than 403 and the route
         does not appear in the OpenAPI schema at all.
 
+    :type  stateStore: Optional[BaseLoginStateStore]
+    :param stateStore: Mints and validates the one-time OAuth ``state``.
+        Defaults to an in-process store, which fails closed under
+        multiple workers; supply a shared implementation for those.
+
+    :type  allowUnauthenticated: bool
+    :param allowUnauthenticated: Escape hatch for a deployment that
+        genuinely terminates auth in front of this router, for example
+        behind an authenticating gateway on a private network. Requires
+        saying so explicitly, because the safe default has to be the one
+        you get by forgetting.
+
+    :raises ValueError: No ``dependencies`` were supplied and
+        ``allowUnauthenticated`` was not set.
+
     **Example Usage**
 
     .. code-block:: python
 
+        from fastapi import Depends
         from algotraders.transport.fastapi import createRouter
 
         async def getSession() -> BrokerSession:
             return await algotraders.initialize(broker = "fyers")
 
-        app.include_router(
-            createRouter(sessionProvider = getSession, enableTrading = False)
-        )
+        app.include_router(createRouter(
+            sessionProvider = getSession,
+            dependencies = [Depends(requireLoggedInUser)]
+        ))
 
     :rtype:   APIRouter
     :returns: The configured router.
     """
+
+    # ! fail at construction, not at request time. A router that silently
+    # serves an authenticated broker session to anonymous callers is the
+    # kind of default that ships and is discovered later
+    if not dependencies and not allowUnauthenticated:
+        raise ValueError(
+            "createRouter needs authentication: pass dependencies = "
+            "[Depends(yourAuthDependency)], or set allowUnauthenticated "
+            "= True if auth is genuinely terminated in front of this "
+            "router. These routes expose positions, holdings, orders "
+            "and a login URL carrying your client id"
+        )
+
+    if allowUnauthenticated and not dependencies:
+        logger.warning(
+            "algotraders router mounted at %s with no authentication; "
+            "every route is reachable by anyone who can reach the port",
+            prefix
+        )
+
+    loginState = stateStore or MemoryLoginStateStore()
 
     router = APIRouter(
         prefix = prefix,
@@ -181,12 +232,17 @@ def createRouter(
 
     @router.post("/session/login", response_model = LoginChallenge)
     async def beginLogin(
-        state : Optional[str] = None,
         session : Any = Depends(sessionProvider)
     ) -> LoginChallenge:
         """
         Produce the broker login URL for a browser redirect.
+
+        The ``state`` is minted here rather than accepted from the
+        caller. A caller-supplied value proves nothing: the point is
+        that only this server knows what it issued.
         """
+
+        state = loginState.mint(session.brokerName)
 
         return session.auth.beginLogin(state = state)
 
@@ -201,7 +257,16 @@ def createRouter(
 
         A POST rather than a GET redirect handler, so the code travels
         in a body instead of a query string that proxies would log.
+
+        The state is validated and burned **before** the code is
+        exchanged. Without that, an attacker who completes a login on
+        their own account and fires the resulting code at this route
+        rebinds the session to their broker account, and every
+        subsequent order trades their book.
         """
+
+        if not loginState.consume(session.brokerName, payload.state):
+            raise InvalidLoginState(brokerName = session.brokerName)
 
         bundle = await session.auth.completeLogin(
             payload.authCode, state = payload.state
@@ -397,6 +462,19 @@ def installExceptionHandlers(app : Any) -> None:
                 "state" : error.state,
                 "brokerName" : error.brokerName
             }
+        )
+
+    @app.exception_handler(InvalidLoginState)
+    async def onInvalidLoginState(
+        request : Any, error : InvalidLoginState
+    ) -> Any:
+        # ? 400, and deliberately terse. A forged callback should learn
+        # nothing about why it was refused
+        logger.warning("rejected a login callback with an invalid state")
+
+        return JSONResponse(
+            status_code = status.HTTP_400_BAD_REQUEST,
+            content = {"detail" : "invalid or expired login state"}
         )
 
     @app.exception_handler(TokenExpiredError)

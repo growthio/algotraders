@@ -33,6 +33,7 @@ Two implementation details are easy to get wrong and worth stating:
 
 import re
 import logging
+import traceback
 
 from typing import Any, FrozenSet, Optional
 
@@ -43,6 +44,11 @@ MASK = "*" * 8
 # ? every key name either SDK, either broker or this library uses for a
 # credential. Matching is case insensitive, so one spelling per concept
 # is enough, but both snake_case and camelCase appear in vendor payloads
+#
+# ! api_key and client_id are here because they ARE secrets in this
+# domain: Kite's api_key is its client id, config.py documents clientId
+# as identifying a real trading account, and the Kite login URL carries
+# the key as a query parameter
 REDACTION_KEYS : FrozenSet[str] = frozenset({
     "access_token", "accessToken",
     "refresh_token", "refreshToken",
@@ -50,19 +56,49 @@ REDACTION_KEYS : FrozenSet[str] = frozenset({
     "request_token", "requestToken",
     "secret_key", "secretKey",
     "api_secret", "apiSecret",
-    "app_id_hash", "appIdHash",
-    "checksum", "password", "pin", "token", "enctoken",
+    "api_key", "apiKey",
+    "client_id", "clientId",
+    "client_secret", "clientSecret",
+    "app_id", "appId", "app_id_hash", "appIdHash",
+    "session_token", "sessionToken", "id_token", "idToken",
+    "checksum", "password", "pin", "token", "enctoken", "totp",
     "public_token", "publicToken",
     "Authorization"
 })
 
+# ? schemes that precede a credential in an Authorization header. The
+# value pattern below stops at whitespace, so without this the scheme
+# word is what gets masked and the credential survives in clear
+_AUTH_SCHEMES = ("Bearer", "Basic", "token", "enctoken", "Token")
+
 # ? matches key=value, key: value, "key": "value" and key = value across
-# JSON, query strings and repr output, capturing the value to replace
+# JSON, query strings and repr output, capturing the value to replace.
+# The optional scheme group is what makes `Authorization: token <secret>`
+# mask the secret rather than the word "token"
 _ASSIGNMENT_PATTERN = re.compile(
     r"(?i)(['\"]?\b(?:" + "|".join(
         sorted((re.escape(key) for key in REDACTION_KEYS), key = len,
                reverse = True)
-    ) + r")\b['\"]?\s*[:=]\s*)(['\"]?)([^\s,;&'\"}\])]+)"
+    ) + r")\b['\"]?\s*[:=]\s*)"
+    r"(?:(?:" + "|".join(_AUTH_SCHEMES) + r")\s+)?"
+    r"(['\"]?)([^\s,;&'\"}\])]+)"
+)
+
+# ! a bare `Bearer <token>` with no recognised key name in front of it
+# still has to be masked, because vendor SDKs log request headers
+# verbatim.
+#
+# Deliberately limited to Bearer and Basic. "token" and "enctoken" are
+# ordinary English in this domain - "token expired", "token refresh
+# failed" - and matching them bare turned every such line into
+# "the token ********". Those two schemes are already covered by the
+# optional scheme group in the assignment pattern above, which only
+# fires after a recognised key like `Authorization:`.
+#
+# The length floor keeps prose such as "Basic auth failed" intact while
+# still catching any credential worth having
+_SCHEME_PATTERN = re.compile(
+    r"(?i)\b(Bearer|Basic)\s+([^\s,;'\"]{8,})"
 )
 
 # ! a JSON Web Token is recognisable on its own and one already leaked
@@ -132,7 +168,11 @@ def redactText(text : str) -> str:
     def replaceAssignment(match : "re.Match[str]") -> str:
         return f"{match.group(1)}{match.group(2)}{MASK}"
 
+    def replaceScheme(match : "re.Match[str]") -> str:
+        return f"{match.group(1)} {MASK}"
+
     redacted = _ASSIGNMENT_PATTERN.sub(replaceAssignment, text)
+    redacted = _SCHEME_PATTERN.sub(replaceScheme, redacted)
 
     return _JWT_PATTERN.sub(MASK, redacted)
 
@@ -146,6 +186,11 @@ class RedactingFilter(logging.Filter):
     costs the lazy-formatting optimisation, but only for records that
     actually contained something secret, and a leaked token is worth far
     more than the microseconds saved.
+
+    Exception text is redacted too. A vendor exception routinely carries
+    the failing request URL, and a broker SDK puts the access token in
+    the query string, so ``logger.exception(...)`` was the single widest
+    hole while only the rendered message was being scrubbed.
     """
 
     def filter(self, record : logging.LogRecord) -> bool:
@@ -169,7 +214,70 @@ class RedactingFilter(logging.Filter):
             record.msg = redacted
             record.args = ()
 
+        self.__redactException__(record)
+
         return True
+
+
+    def __redactException__(self, record : logging.LogRecord) -> None:
+        """
+        Render and scrub the traceback attached to a record.
+
+        ``Formatter.formatException`` runs long after any filter, so the
+        traceback has to be pre-rendered into ``exc_text`` here for the
+        redaction to reach it. Formatters reuse ``exc_text`` when it is
+        already populated, so this both scrubs and short circuits.
+        """
+
+        if record.exc_info and not record.exc_text:
+            try:
+                record.exc_text = "".join(
+                    traceback.format_exception(*record.exc_info)
+                )
+            except Exception:  # pragma: no cover - defensive
+                record.exc_text = None
+
+        if record.exc_text:
+            record.exc_text = redactText(record.exc_text)
+
+        if record.stack_info:
+            record.stack_info = redactText(record.stack_info)
+
+
+def installRedaction(handler : logging.Handler) -> logging.Handler:
+    """
+    Attach credential redaction to a handler.
+
+    :func:`getLogger` covers everything this library logs, but nothing
+    it can do reaches records emitted by ``fyers_apiv3``, ``kiteconnect``
+    or ``urllib3`` - and those are exactly the loggers that echo vendor
+    payloads. A handler level filter is the only placement that sees
+    every record in the process, so a host that wants blanket coverage
+    installs it on its own handlers.
+
+    :type  handler: logging.Handler
+    :param handler: The handler to protect.
+
+    **Example Usage**
+
+    .. code-block:: python
+
+        import logging
+        from algotraders.logger import installRedaction
+
+        handler = logging.StreamHandler()
+        logging.getLogger().addHandler(installRedaction(handler))
+
+    :rtype:   logging.Handler
+    :returns: The same handler, so the call can be chained.
+    """
+
+    if not any(
+        isinstance(entry, RedactingFilter) for entry in handler.filters
+    ):
+        handler.addFilter(RedactingFilter())
+
+    return handler
 
 
 def getLogger(name : Optional[str] = None) -> logging.Logger:

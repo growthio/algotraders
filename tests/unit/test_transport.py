@@ -21,10 +21,12 @@ import pytest
 
 pytest.importorskip("fastapi", reason = "requires the optional server extra")
 
-from fastapi import FastAPI                                    # noqa: E402
+from fastapi import Depends, FastAPI                           # noqa: E402
 from fastapi.testclient import TestClient                      # noqa: E402
 
+from algotraders.auth.state import MemoryLoginStateStore       # noqa: E402
 from algotraders.core.clock import IST                         # noqa: E402
+from tests.fakes.clock import FakeClock                        # noqa: E402
 from algotraders.errors import (                               # noqa: E402
     AuthorizationRequired, DataSubscriptionRequired, InstrumentNotFound,
     OrderRejected, RateLimitExceeded, TokenExpiredError,
@@ -136,6 +138,40 @@ class StubAPI:
         return OrderResponse(orderId = "9001", source = "fyers")
 
 
+class StubAuth:
+    """
+    Authentication surface recording how often a login was completed.
+
+    The count is what proves a forged callback never reached the broker,
+    which matters more than the status code the caller saw.
+    """
+
+    def __init__(self) -> None:
+        self.completeLoginCalls = 0
+
+
+    def beginLogin(self, state : object = None) -> object:
+        from algotraders.models.auth import LoginChallenge
+
+        return LoginChallenge(
+            brokerName = "fyers", state = state,
+            loginURL = "https://api.fyers.in/api/v3/generate-authcode?x=1"
+        )
+
+
+    async def completeLogin(
+        self, authCode : str, state : object = None
+    ) -> object:
+        self.completeLoginCalls += 1
+
+        from algotraders.models.auth import TokenBundle
+
+        return TokenBundle.build(
+            brokerName = "fyers", clientId = "FX0KN0G7PX-100",
+            accessToken = "exchanged-%s" % authCode, issuedAt = MOMENT
+        )
+
+
 class StubSession:
     """
     Minimal stand-in for a BrokerSession.
@@ -145,6 +181,7 @@ class StubSession:
         self, failure : BaseException = None, resolver : object = None
     ) -> None:
         self.brokerName = "fyers"
+        self.auth = StubAuth()
         self.api = StubAPI(failure)
         self.resolver = StubResolver() if resolver is None else resolver
         self.tokenStore = None
@@ -160,10 +197,13 @@ class StubSession:
 
 def buildClient(
     failure : BaseException = None, enableTrading : bool = False,
-    resolver : object = None
+    resolver : object = None, stateStore : object = None
 ) -> TestClient:
     """
     Build a TestClient over a router bound to a stub session.
+
+    Every caller supplies an auth dependency, because ``createRouter``
+    now refuses to build without one.
     """
 
     session = StubSession(failure, resolver = resolver)
@@ -175,11 +215,12 @@ def buildClient(
         return session
 
     app = FastAPI()
-    app.include_router(
-        createRouter(
-            sessionProvider = provider, enableTrading = enableTrading
-        )
+    router = createRouter(
+        sessionProvider = provider, enableTrading = enableTrading,
+        dependencies = [Depends(lambda : "test-user")],
+        stateStore = stateStore
     )
+    app.include_router(router)
     installExceptionHandlers(app)
 
     client = TestClient(app, raise_server_exceptions = False)
@@ -419,6 +460,123 @@ def test_searchBacksATypeAhead() -> None:
     assert response.json()[0]["broker_symbol"] == "NSE:SBIN-EQ"
 
 
+def test_routerRefusesToBuildWithoutAuthentication() -> None:
+    """
+    A router mounted with no auth dependency publishes an authenticated
+    broker session - positions, holdings, the order book, and a login
+    URL carrying the application's client id - to anyone who can reach
+    the port.
+
+    It fails at construction rather than at request time, because the
+    unsafe default is the one you get by forgetting.
+    """
+
+    async def provider() -> object:
+        return StubSession()
+
+    with pytest.raises(ValueError) as failure:
+        createRouter(sessionProvider = provider)
+
+    assert "authentication" in str(failure.value).lower()
+
+
+def test_unauthenticatedMountRequiresAnExplicitOptOut() -> None:
+    """
+    A deployment behind an authenticating gateway can still mount it,
+    but has to say so.
+    """
+
+    async def provider() -> object:
+        return StubSession()
+
+    router = createRouter(
+        sessionProvider = provider, allowUnauthenticated = True
+    )
+
+    assert router is not None
+
+
+def test_loginMintsAServerSideState() -> None:
+    """
+    The state is issued here, not accepted from the caller. A
+    caller-supplied value proves nothing, since the whole point is that
+    only this server knows what it issued.
+    """
+
+    store = MemoryLoginStateStore(clock = FakeClock())
+    client = buildClient(stateStore = store)
+
+    response = client.post("/algotraders/session/login")
+
+    assert response.status_code == 200
+
+    state = response.json()["state"]
+
+    assert state
+    assert len(store.outstanding) == 1
+
+
+def test_callbackWithAForgedStateIsRejected() -> None:
+    """
+    The attack this closes: an attacker completes a login on their own
+    broker account, captures the resulting code, and fires it at this
+    host. Accepting it would rebind the session to the attacker's
+    account and persist their token, so every later order trades their
+    book.
+    """
+
+    store = MemoryLoginStateStore(clock = FakeClock())
+    client = buildClient(stateStore = store)
+
+    response = client.post("/algotraders/session/callback", json = {
+        "authCode" : "attacker-code", "state" : "never-issued"
+    })
+
+    assert response.status_code == 400
+    assert "invalid or expired" in response.json()["detail"]
+
+    # ! and the code was never exchanged
+    assert client.session.auth.completeLoginCalls == 0
+
+
+def test_callbackWithoutAStateIsRejected() -> None:
+    """
+    Omitting the parameter must not be a way around the check.
+    """
+
+    client = buildClient(stateStore = MemoryLoginStateStore(clock = FakeClock()))
+
+    response = client.post("/algotraders/session/callback", json = {
+        "authCode" : "code"
+    })
+
+    assert response.status_code == 400
+    assert client.session.auth.completeLoginCalls == 0
+
+
+def test_callbackWithTheIssuedStateSucceedsOnce() -> None:
+    """
+    The honest path works, and the state is burned so a captured
+    callback URL cannot be replayed.
+    """
+
+    store = MemoryLoginStateStore(clock = FakeClock())
+    client = buildClient(stateStore = store)
+
+    state = client.post("/algotraders/session/login").json()["state"]
+
+    first = client.post("/algotraders/session/callback", json = {
+        "authCode" : "code", "state" : state
+    })
+    second = client.post("/algotraders/session/callback", json = {
+        "authCode" : "code", "state" : state
+    })
+
+    assert first.status_code == 200
+    assert second.status_code == 400
+    assert client.session.auth.completeLoginCalls == 1
+
+
 def test_missingResolverReturns501() -> None:
     """
     A broker without an instrument resolver is an unimplemented
@@ -436,7 +594,10 @@ def test_missingResolverReturns501() -> None:
         return session
 
     app = FastAPI()
-    app.include_router(createRouter(sessionProvider = provider))
+    app.include_router(createRouter(
+        sessionProvider = provider,
+        dependencies = [Depends(lambda : "test-user")]
+    ))
     installExceptionHandlers(app)
 
     response = TestClient(app).post("/algotraders/instruments/refresh")
@@ -453,9 +614,10 @@ def test_routerPrefixIsConfigurable() -> None:
         return StubSession()
 
     app = FastAPI()
-    app.include_router(
-        createRouter(sessionProvider = provider, prefix = "/broker/fyers")
-    )
+    app.include_router(createRouter(
+        sessionProvider = provider, prefix = "/broker/fyers",
+        dependencies = [Depends(lambda : "test-user")]
+    ))
 
     assert TestClient(app).get("/broker/fyers/brokers").status_code == 200
 

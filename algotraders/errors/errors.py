@@ -222,6 +222,35 @@ class AuthorizationRequired(AuthenticationError):
         )
 
 
+class InvalidLoginState(AuthenticationError):
+    """
+    A login callback carried a ``state`` that was never issued, has
+    already been redeemed, or has expired.
+
+    This is the failure mode of a forged callback. An attacker who
+    completes a login on their own account and then fires the resulting
+    code at somebody else's callback route would otherwise rebind that
+    host's session to the attacker's broker account. Treat it as hostile
+    traffic rather than a user error: never retry it, never fall back to
+    completing the login without a state.
+    """
+
+    def __init__(
+        self, brokerName : Optional[str] = None,
+        message : Optional[str] = None
+    ) -> None:
+        self.brokerName = brokerName
+
+        broker = f"{brokerName} " if brokerName else ""
+
+        super().__init__(
+            message or (
+                f"{broker}login callback carried an unrecognised or expired "
+                "state; the request was not initiated by this session"
+            )
+        )
+
+
 class TokenExpiredError(AuthenticationError):
     """
     The stored access token is no longer accepted by the broker.
