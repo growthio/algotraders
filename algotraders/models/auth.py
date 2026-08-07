@@ -132,7 +132,7 @@ class TokenBundle(AlgoTradersModel):
         if self.expiresAt is None:
             return False
 
-        return toIST(now) >= self.expiresAt
+        return requireAwareIST(now) >= self.expiresAt
 
 
     def canRefresh(self, now : dt.datetime) -> bool:
@@ -150,7 +150,7 @@ class TokenBundle(AlgoTradersModel):
         if self.refreshExpiresAt is None:
             return True
 
-        return toIST(now) < self.refreshExpiresAt
+        return requireAwareIST(now) < self.refreshExpiresAt
 
 
     def secondsRemaining(self, now : dt.datetime) -> Optional[float]:
@@ -165,7 +165,9 @@ class TokenBundle(AlgoTradersModel):
         if self.expiresAt is None:
             return None
 
-        return max(0.0, (self.expiresAt - toIST(now)).total_seconds())
+        return max(
+            0.0, (self.expiresAt - requireAwareIST(now)).total_seconds()
+        )
 
 
     @classmethod

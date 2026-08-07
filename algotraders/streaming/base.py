@@ -170,7 +170,10 @@ class BaseBrokerStream(ABC):
 
         await self.connect()
 
-        if self.__supervisor__ is None:
+        # ! `is None` alone was not enough: a supervisor that returned
+        # after a token expiry left a finished task in place, so a later
+        # start() silently ran with no staleness detection at all
+        if self.__supervisor__ is None or self.__supervisor__.done():
             self.__supervisor__ = asyncio.create_task(self.__supervise__())
 
 
@@ -289,10 +292,22 @@ class BaseBrokerStream(ABC):
                     self.brokerName
                 )
 
+                self.__stopping__ = True
+
+                # ! close the socket before returning. The vendor SDKs
+                # reconnect on their own, so simply abandoning the
+                # supervisor left them hammering the broker with a
+                # credential that will never be accepted again
+                try:
+                    await self.disconnect()
+                except Exception as closing:
+                    logger.debug(
+                        "%s disconnect after expiry raised %s",
+                        self.brokerName, type(closing).__name__
+                    )
+
                 if self.onError is not None:
                     self.onError(error)
-
-                self.__stopping__ = True
 
                 return
             except Exception as error:

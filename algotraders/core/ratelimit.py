@@ -50,7 +50,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Mapping, Optional, Sequence
 
 from algotraders.core.clock import BaseClock
-from algotraders.errors import RateLimitExceeded
+from algotraders.errors import DailyQuotaExhausted, RateLimitExceeded
 from algotraders.logger import getLogger
 from algotraders.models.enums import EndpointClass
 
@@ -305,15 +305,23 @@ class RateLimiter:
 
     def __init__(
         self, buckets : Sequence[TokenBucket],
-        quotas : Sequence[DailyQuota], clock : BaseClock
+        quotas : Sequence[DailyQuota], clock : BaseClock,
+        lock : Optional[asyncio.Lock] = None
     ) -> None:
         self.buckets = list(buckets)
         self.quotas = list(quotas)
         self.clock = clock
 
         # ! one lock serialises the whole decide-sleep-consume sequence,
-        # which is what prevents every waiter waking onto the same token
-        self.lock = asyncio.Lock()
+        # which is what prevents every waiter waking onto the same token.
+        #
+        # It is injected because limiters SHARE bucket objects across
+        # endpoint classes. A lock per limiter left each class free to
+        # observe and consume the same token concurrently, so five
+        # classes in flight admitted five calls where one was permitted -
+        # the very thundering herd this lock exists to stop, reintroduced
+        # one level up
+        self.lock = lock or asyncio.Lock()
 
 
     async def acquire(self, tokens : int = 1) -> float:
@@ -332,16 +340,31 @@ class RateLimiter:
             or use to size its own concurrency.
         """
 
+        # ! a bucket can never hold more than its capacity, so a request
+        # larger than the smallest bucket is unsatisfiable by
+        # construction. Left unchecked it burned every retry round and
+        # then consumed anyway, silently exceeding the published limit
+        smallest = min(
+            (bucket.limit.capacity for bucket in self.buckets), default = tokens
+        )
+
+        if tokens > smallest:
+            raise ValueError(
+                f"cannot acquire {tokens} tokens; the smallest bucket "
+                f"holds at most {smallest}"
+            )
+
         async with self.lock:
             for quota in self.quotas:
                 if quota.wouldExceed(tokens):
-                    raise RateLimitExceeded(
+                    raise DailyQuotaExhausted(
                         f"daily quota {quota.name} exhausted "
                         f"({quota.capacity:,} calls)",
                         retryAfter = quota.secondsUntilReset()
                     )
 
             waited = 0.0
+            admitted = False
 
             for _ in range(MAX_ACQUIRE_ROUNDS):
                 delay = max(
@@ -350,10 +373,23 @@ class RateLimiter:
                 )
 
                 if delay <= 0:
+                    admitted = True
+
                     break
 
                 await self.clock.sleep(delay)
                 waited += delay
+
+            if not admitted:
+                # ! never fall through to consume(). Doing so charged the
+                # call after failing to make room for it, which is a
+                # quota violation dressed up as a successful acquire
+                raise RateLimitExceeded(
+                    f"could not acquire {tokens} token(s) within "
+                    f"{MAX_ACQUIRE_ROUNDS} rounds after waiting "
+                    f"{waited:.2f}s",
+                    retryAfter = waited or None
+                )
 
             for bucket in self.buckets:
                 bucket.consume(tokens)
@@ -450,6 +486,10 @@ class RateLimitPolicy:
             for endpointClass, limits in (endpointLimits or {}).items()
         }
 
+        # ! one lock for the whole policy, handed to every limiter it
+        # builds, because they contend the same shared bucket objects
+        self.__lock__ = asyncio.Lock()
+
         self.__limiters__ : Dict[EndpointClass, RateLimiter] = {}
 
 
@@ -472,7 +512,8 @@ class RateLimitPolicy:
                     + self.endpointBuckets.get(endpointClass, [])
                 ),
                 quotas = self.quotas,
-                clock = self.clock
+                clock = self.clock,
+                lock = self.__lock__
             )
 
         return self.__limiters__[endpointClass]

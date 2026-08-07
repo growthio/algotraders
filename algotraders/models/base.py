@@ -87,7 +87,14 @@ class AlgoTradersModel(BaseModel):
         frozen = True,
         extra = "forbid",
         str_strip_whitespace = True,
-        validate_default = True
+        validate_default = True,
+
+        # ! NaN and Infinity are accepted by pydantic for float by
+        # default. A NaN price serialises as the bare token `nan`, which
+        # is not valid JSON, and makes max()/min() order dependent so the
+        # same candles aggregate to different highs depending on input
+        # ordering. Corrupt market data should fail at the boundary
+        allow_inf_nan = False
     )
 
 

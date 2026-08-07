@@ -16,6 +16,7 @@ import datetime as dt
 import pytest
 from pydantic import ValidationError
 
+from algotraders.errors import InvalidInstrumentKey
 from algotraders.models.enums import (
     Exchange, InstrumentType, OptionRight, Segment
 )
@@ -122,15 +123,49 @@ def test_symbolRejectsTheKeySeparator() -> None:
     "NSE:SBIN",                              # missing type
     "NFO:NIFTY:OPT:2026-01-27:24800",        # strike without a right
     "NFO:NIFTY:OPT:2026-01-27:24800:CE:XX",  # trailing junk
+    "NFO:NIFTY:OPT:2026-01-27:ABC:CE",       # strike is not a number
+    "NFO:NIFTY:OPT:2026-01-27:NaN:CE",       # never equals itself
+    "NFO:NIFTY:OPT:2026-01-27:Infinity:CE",  # not finite
+    "NFO:NIFTY:OPT:2026-01-27:-100:CE",      # negative strike
+    "NFO:NIFTY:OPT:2026-01-27:0:CE",         # zero strike
+    "NSE:SBIN:EQ:notadate",                  # unparseable expiry
 ])
-def test_malformedKeysAreRejected(canonical : str) -> None:
+def test_malformedKeysRaiseALibraryError(canonical : str) -> None:
     """
-    A key that does not match the grammar fails loudly rather than
-    parsing into something subtly wrong.
+    Every malformed key raises ``InvalidInstrumentKey``, not a bare
+    ``ValueError`` or ``ArithmeticError``.
+
+    These strings arrive in request bodies. ``Decimal("ABC")`` raises
+    ``InvalidOperation``, which subclasses ``ArithmeticError`` and
+    matched no exception handler, so it surfaced as an HTTP 500 with a
+    stack trace instead of a 400. ``NaN`` was worse: it parsed cleanly
+    and produced a key that never compares equal to itself, so the
+    instrument could never be looked up again.
     """
 
-    with pytest.raises((ValueError, ValidationError)):
+    with pytest.raises(InvalidInstrumentKey):
         InstrumentKey.parse(canonical)
+
+
+def test_largeStrikeRendersWithoutOverflowing() -> None:
+    """
+    A strike beyond the default decimal precision must render, not
+    explode inside ``__str__``.
+
+    The previous implementation called ``quantize`` on the integral
+    branch, which needs the full significand to fit in the context's 28
+    digits and raised ``InvalidOperation`` from the string conversion.
+    """
+
+    key = InstrumentKey(
+        exchange = Exchange.NFO, tradingSymbol = "NIFTY",
+        instrumentType = InstrumentType.OPTION,
+        expiry = dt.date(2026, 1, 27),
+        strike = decimal.Decimal("123456789012345678901234567890"),
+        optionRight = OptionRight.CALL
+    )
+
+    assert str(key).endswith(":123456789012345678901234567890:CE")
 
 
 def test_optionWithoutStrikeIsRejected() -> None:

@@ -18,6 +18,7 @@ from algotraders.errors.errors import (
     BrokerConfigurationError,
     TransientBrokerError,
     RateLimitExceeded,
+    DailyQuotaExhausted,
 
     AuthenticationError,
     InvalidCredentials,
@@ -27,6 +28,7 @@ from algotraders.errors.errors import (
 
     InstrumentError,
     InstrumentNotFound,
+    InvalidInstrumentKey,
     InstrumentMasterUnavailable,
 
     DataError,
@@ -50,6 +52,7 @@ __all__ = [
     "BrokerConfigurationError",
     "TransientBrokerError",
     "RateLimitExceeded",
+    "DailyQuotaExhausted",
 
     "AuthenticationError",
     "InvalidCredentials",
@@ -59,6 +62,7 @@ __all__ = [
 
     "InstrumentError",
     "InstrumentNotFound",
+    "InvalidInstrumentKey",
     "InstrumentMasterUnavailable",
 
     "DataError",

@@ -112,10 +112,32 @@ def aggregateCandles(
     if not candles:
         return []
 
-    grouped : Dict[Tuple[str, Tuple[int, ...]], List[Candle]] = {}
+    # ! the required base timeframe was declared and never checked, so a
+    # caller mixing 1D and 1m bars got both summed into one month and the
+    # volume silently doubled. Nothing about the result looked wrong
+    required = SUPPORTED_AGGREGATIONS[timeframe]
+    wrong = {
+        candle.timeframe for candle in candles if candle.timeframe is not required
+    }
 
+    if wrong:
+        raise UnsupportedTimeframe(
+            brokerName = "aggregation",
+            timeframe = sorted(entry.value for entry in wrong)[0],
+            supported = [required]
+        )
+
+    grouped : Dict[Tuple[str, str, Tuple[int, ...]], List[Candle]] = {}
+
+    # ! source is part of the key. Folding a Fyers bar and a Kite bar for
+    # the same day into one doubles the volume and attributes it to
+    # whichever arrived first, which is exactly the provenance loss the
+    # mandatory `source` field on Candle exists to prevent
     for candle in sorted(candles, key = lambda entry: entry.timestamp):
-        key = (candle.instrumentKey, bucketFor(candle.timestamp, timeframe))
+        key = (
+            candle.instrumentKey, candle.source,
+            bucketFor(candle.timestamp, timeframe)
+        )
         grouped.setdefault(key, []).append(candle)
 
     aggregated = [

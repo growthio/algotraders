@@ -135,8 +135,13 @@ class RateLimitExceeded(TransientBrokerError):
     :type  retryAfter: Optional[float]
     :param retryAfter: Seconds the broker asked the caller to wait, when
         it supplies one. The retry helper honours this in preference to
-        its own exponential backoff.
+        its own exponential backoff, up to its own ceiling.
     """
+
+    # ? read by the retry helper. A subclass sets this False to opt out
+    # of retrying entirely without having to be removed from every
+    # policy's retryOn tuple
+    retryable = True
 
     def __init__(
         self, message : str = "broker rate limit exceeded",
@@ -145,6 +150,20 @@ class RateLimitExceeded(TransientBrokerError):
         self.retryAfter = retryAfter
 
         super().__init__(message)
+
+
+class DailyQuotaExhausted(RateLimitExceeded):
+    """
+    The application's daily call budget is spent.
+
+    Distinct from an ordinary rate limit because the recovery is
+    different in kind: a per second limit clears in a second, while this
+    clears at the next IST midnight. Retrying it means sleeping for
+    hours inside a request handler, so it is marked non-retryable and
+    the caller is expected to reschedule rather than wait.
+    """
+
+    retryable = False
 
 
 class AuthenticationError(AlgoTradersError):
@@ -297,6 +316,20 @@ class InstrumentNotFound(InstrumentError):
         broker = f" for {brokerName}" if brokerName else ""
 
         super().__init__(f"no instrument matches {key!r}{broker}")
+
+
+class InvalidInstrumentKey(InstrumentError):
+    """
+    A canonical instrument key could not be parsed.
+
+    Separate from :class:`InstrumentNotFound`: the string is malformed
+    rather than merely unknown. These arrive in request bodies, so the
+    distinction is the difference between a 400 and a 404, and both beat
+    the 500 that an unmapped ``decimal.InvalidOperation`` used to
+    produce.
+    """
+
+    pass
 
 
 class InstrumentMasterUnavailable(InstrumentError):

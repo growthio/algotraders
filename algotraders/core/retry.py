@@ -100,6 +100,13 @@ class RetryPolicy:
         if attempt >= self.maxAttempts:
             return False
 
+        # ! an error may opt out of retrying regardless of the policy.
+        # DailyQuotaExhausted subclasses RateLimitExceeded, so a plain
+        # isinstance test against retryOn would schedule a multi-hour
+        # sleep for something that cannot clear before IST midnight
+        if not getattr(error, "retryable", True):
+            return False
+
         return isinstance(error, self.retryOn)
 
 
@@ -131,7 +138,11 @@ class RetryPolicy:
         retryAfter = getattr(error, "retryAfter", None)
 
         if retryAfter is not None:
-            return float(retryAfter)
+            # ! capped. An uncapped broker hint is a denial of service on
+            # ourselves: a spent daily quota reports tens of thousands of
+            # seconds, and honouring that verbatim pinned a coroutine for
+            # days while holding a semaphore slot
+            return min(self.maxDelay, max(0.0, float(retryAfter)))
 
         delay = min(self.maxDelay, self.baseDelay * (2 ** (attempt - 1)))
 

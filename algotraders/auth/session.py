@@ -121,6 +121,7 @@ class BrokerSession:
         self.bundle = bundle
         self.api = api
         self.resolver = resolver
+        self.stream = None
         self.caller = caller
         self.clock = clock or SystemClock()
         self.tokenStore = tokenStore
@@ -223,12 +224,42 @@ class BrokerSession:
 
         logger.info("refreshing expired %s session", self.brokerName)
 
-        self.bundle = await self.auth.refresh(self.bundle)
+        self.rebind(await self.auth.refresh(self.bundle))
 
         if self.tokenStore is not None:
             self.tokenStore.write(self.bundle)
 
         return True
+
+
+    def rebind(self, bundle : TokenBundle) -> Any:
+        """
+        Adopt a new token across every surface holding the old one.
+
+        ! This is not bookkeeping. ``buildSessionManager`` bakes the
+        access token into the vendor client at construction, so updating
+        ``self.bundle`` alone leaves the API and the resolver calling the
+        broker with the token that just expired. A refresh would appear
+        to succeed, ``status()`` would report a healthy session, and
+        every subsequent request would fail authentication until a human
+        noticed - precisely at the daily rollover, when unattended
+        operation is the whole point.
+
+        :type  bundle: TokenBundle
+        :param bundle: The newly issued token.
+
+        :rtype:   Any
+        :returns: The rebuilt vendor client.
+        """
+
+        self.bundle = bundle
+        manager = self.auth.buildSessionManager(bundle)
+
+        for surface in (self.api, self.resolver, self.stream):
+            if surface is not None and hasattr(surface, "sessionManager"):
+                surface.sessionManager = manager
+
+        return manager
 
 
     async def close(self) -> None:

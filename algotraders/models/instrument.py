@@ -42,6 +42,7 @@ from typing import Any, Dict, Optional
 
 from pydantic import Field, field_validator, model_validator
 
+from algotraders.errors import InvalidInstrumentKey
 from algotraders.models.base import AlgoTradersModel
 from algotraders.models.enums import (
     DERIVATIVE_EXCHANGES, Exchange, InstrumentType, OptionRight, Segment
@@ -236,10 +237,12 @@ class InstrumentKey(AlgoTradersModel):
 
         parts = str(value).split(KEY_SEPARATOR)
 
-        if len(parts) < 3:
-            raise ValueError(
-                f"instrument key needs at least exchange, symbol and type, "
-                f"got {value!r}"
+        # ! arity is checked before anything is parsed, so a wrong shape
+        # reports the component count rather than an unrelated date error
+        if len(parts) not in (3, 4, 6):
+            raise InvalidInstrumentKey(
+                f"instrument key has {len(parts)} components, expected "
+                f"3, 4 or 6: {value!r}"
             )
 
         fields : Dict[str, Any] = {
@@ -248,19 +251,58 @@ class InstrumentKey(AlgoTradersModel):
             "instrumentType" : parts[2].strip().upper()
         }
 
-        if len(parts) >= 4:
-            fields["expiry"] = dt.date.fromisoformat(parts[3].strip())
+        # ! every parse failure below becomes InvalidInstrumentKey. These
+        # strings arrive in request bodies, and Decimal raises
+        # InvalidOperation - an ArithmeticError, not a ValueError - which
+        # matched no exception handler and surfaced as a 500 with a stack
+        # trace instead of a 400
+        try:
+            if len(parts) >= 4:
+                fields["expiry"] = dt.date.fromisoformat(parts[3].strip())
 
-        if len(parts) == 6:
-            fields["strike"] = decimal.Decimal(parts[4].strip())
-            fields["optionRight"] = parts[5].strip().upper()
-        elif len(parts) == 5 or len(parts) > 6:
-            raise ValueError(
-                f"instrument key has {len(parts)} components, expected "
-                f"3, 4 or 6: {value!r}"
-            )
+            if len(parts) == 6:
+                fields["strike"] = _parseStrike(parts[4].strip())
+                fields["optionRight"] = parts[5].strip().upper()
 
-        return cls(**fields)
+            return cls(**fields)
+        except InvalidInstrumentKey:
+            raise
+        except Exception as error:
+            raise InvalidInstrumentKey(
+                f"could not parse instrument key {value!r}: {error}"
+            ) from error
+
+
+def _parseStrike(text : str) -> decimal.Decimal:
+    """
+    Parse a strike, rejecting the values that break an exact key.
+
+    ``NaN`` never compares equal to itself, so a key containing one can
+    never be looked up again. Infinity and a value beyond the decimal
+    context's precision both explode later during rendering rather than
+    here, which is a far worse place to find out.
+
+    :raises InvalidInstrumentKey: The strike is not a usable finite
+        number.
+
+    :rtype:   decimal.Decimal
+    :returns: The parsed strike.
+    """
+
+    try:
+        strike = decimal.Decimal(text)
+    except (decimal.InvalidOperation, ValueError, TypeError) as error:
+        raise InvalidInstrumentKey(
+            f"strike {text!r} is not a number"
+        ) from error
+
+    if not strike.is_finite():
+        raise InvalidInstrumentKey(f"strike {text!r} is not finite")
+
+    if strike <= 0:
+        raise InvalidInstrumentKey(f"strike {text!r} must be positive")
+
+    return strike
 
 
 def _renderStrike(strike : decimal.Decimal) -> str:
@@ -272,14 +314,20 @@ def _renderStrike(strike : decimal.Decimal) -> str:
     :returns: The shortest exact rendering of the strike.
     """
 
-    normalised = strike.normalize()
+    # ! neither normalize() nor quantize() is safe here. quantize()
+    # raises InvalidOperation once the significand exceeds the context
+    # precision, and normalize() silently ROUNDS to it, so a strike with
+    # more digits than the context allows came back altered and the key
+    # no longer round tripped.
+    #
+    # Formatting with "f" expands any exponent without consulting the
+    # context at all, so trailing zeros are stripped textually instead
+    text = format(strike, "f")
 
-    # ? normalize() turns 24800 into 2.48E+4, which is exact but useless
-    # as a key component, so exponents are expanded back out
-    if normalised == normalised.to_integral_value():
-        return str(normalised.quantize(decimal.Decimal(1)))
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
 
-    return format(normalised, "f")
+    return text
 
 
 class Instrument(AlgoTradersModel):
