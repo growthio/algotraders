@@ -47,7 +47,7 @@ Resolve Fyers credentials from the environment, falling back to
 
 import pathlib
 
-from typing import Any, Dict, Optional, Type
+from typing import Any, ClassVar, Dict, Optional, Type
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -95,7 +95,15 @@ class RuntimeConfig(BaseSettings):
         # ? fields are bound to broker specific environment variables via
         # validation_alias; this keeps the field name usable too, so a
         # host can pass credentials directly instead of exporting them
-        populate_by_name = True
+        populate_by_name = True,
+
+        # ! required BECAUSE of populate_by_name. With the field name
+        # accepted and matching case-insensitively, pydantic-settings
+        # also honoured a bare `PIN` or `CLIENTID` from the environment
+        # regardless of the alias - so an unrelated export bound itself
+        # onto a credentials object. The prefix moves that fallback to
+        # ALGOTRADERS_PIN, which nothing else is going to claim
+        env_prefix = "ALGOTRADERS_"
     )
 
     tokenDirectory : pathlib.Path = Field(
@@ -172,7 +180,15 @@ class BaseBrokerCredentials(BaseSettings):
         # ? fields are bound to broker specific environment variables via
         # validation_alias; this keeps the field name usable too, so a
         # host can pass credentials directly instead of exporting them
-        populate_by_name = True
+        populate_by_name = True,
+
+        # ! required BECAUSE of populate_by_name. With the field name
+        # accepted and matching case-insensitively, pydantic-settings
+        # also honoured a bare `PIN` or `CLIENTID` from the environment
+        # regardless of the alias - so an unrelated export bound itself
+        # onto a credentials object. The prefix moves that fallback to
+        # ALGOTRADERS_PIN, which nothing else is going to claim
+        env_prefix = "ALGOTRADERS_"
     )
 
     clientId : SecretStr
@@ -180,8 +196,13 @@ class BaseBrokerCredentials(BaseSettings):
     redirectURL : Optional[str] = None
     pin : Optional[SecretStr] = None
 
-    # ! overridden by every concrete subclass, used in error messages
-    brokerName : str = "unknown"
+    # ! a ClassVar, not a settings field. As a field with no
+    # validation_alias and case_sensitive off, pydantic-settings bound
+    # it to a bare `BROKERNAME` environment variable, so an unrelated
+    # export could rewrite it on every credentials object. The same
+    # applied to any un-aliased field: a generic `PIN` was slurped into
+    # Kite credentials, which have no PIN concept at all
+    brokerName : ClassVar[str] = "unknown"
 
 
     def __repr__(self) -> str:
@@ -215,7 +236,7 @@ class FyersCredentials(BaseBrokerCredentials):
     for the initial login.
     """
 
-    brokerName : str = "fyers"
+    brokerName : ClassVar[str] = "fyers"
 
     clientId : SecretStr = Field(
         validation_alias = "ALGOTRADERS_FYERS_CLIENT_ID"
@@ -243,7 +264,15 @@ class KiteCredentials(BaseBrokerCredentials):
     every day after the 06:00 IST expiry.
     """
 
-    brokerName : str = "kite"
+    brokerName : ClassVar[str] = "kite"
+
+    # ! redeclared with an alias even though it is unused, because the
+    # inherited field had none: with case_sensitive off, a bare `PIN`
+    # in the environment was bound onto Kite credentials, which have no
+    # PIN concept at all
+    pin : Optional[SecretStr] = Field(
+        default = None, validation_alias = "ALGOTRADERS_KITE_PIN"
+    )
 
     clientId : SecretStr = Field(
         validation_alias = "ALGOTRADERS_KITE_API_KEY"
@@ -325,10 +354,12 @@ def credentialsFor(
     """
     Resolve one broker's credentials from the environment.
 
-    Values are taken from the process environment first, then from the
-    dotenv file, then from any explicit ``overrides`` passed here, which
-    exist so a host application holding credentials in its own database
-    can bypass the environment entirely.
+    Precedence, highest first: explicit ``overrides`` passed here, then
+    the process environment, then the dotenv file. Overrides win because
+    a host holding credentials in its own database is stating a fact
+    rather than suggesting a default; the environment beats the dotenv
+    file so a stray ``.env.local`` in a container's working directory
+    can never displace deployed configuration.
 
     :type  brokerName: str
     :param brokerName: Registry name of the broker, for example
@@ -374,10 +405,16 @@ def credentialsFor(
     except Exception as error:
         missing = _missingVariables(model, error)
 
+        # ! `from None`, not `from error`. A pydantic ValidationError
+        # echoes the offending input_value, so a caller passing a
+        # wrongly typed secret got it printed verbatim in the chained
+        # traceback - which the redacting filter never sees, because it
+        # does not reach __cause__. The variable names below are all an
+        # operator needs, and they carry nothing sensitive
         raise InvalidCredentials(
             f"could not resolve {brokerName} credentials",
             brokerName = brokerName, missing = missing
-        ) from error
+        ) from None
 
     logger.debug("resolved credentials: %r", credentials)
 

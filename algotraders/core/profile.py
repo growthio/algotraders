@@ -23,6 +23,7 @@ is now a free function taking a coroutine factory.
 """
 
 import math
+import asyncio
 import tracemalloc
 
 from dataclasses import dataclass
@@ -32,11 +33,20 @@ from algotraders.logger import getLogger
 
 logger = getLogger(__name__)
 
+# ! tracemalloc has one process-wide state, so overlapping profiles
+# corrupt each other's readings. Serialised rather than documented away
+_PROFILE_LOCK = asyncio.Lock()
+
 # ? garbage collection is lazy, so the steady state high water mark sits
 # above any single sample; 20 percent is the margin that has held up
 DEFAULT_BUFFER_FRACTION = 0.20
 
 BYTES_PER_MEGABYTE = 10 ** 6
+
+# ! a ceiling on what this function will ever recommend. Broker rate
+# limits bind long before local memory does, so a large answer here is
+# always wrong even when the arithmetic is right
+MAXIMUM_RECOMMENDED_CONCURRENCY = 64
 
 
 @dataclass(frozen = True)
@@ -76,7 +86,8 @@ class MemoryProfile:
 async def traceMemoryUsage(
     operation : Callable[[], Awaitable[Any]],
     limitMegabytes : float,
-    bufferMegabytes : Optional[float] = None
+    bufferMegabytes : Optional[float] = None,
+    maximumConcurrency : int = MAXIMUM_RECOMMENDED_CONCURRENCY
 ) -> MemoryProfile:
     """
     Measure one operation's peak allocation and derive a safe
@@ -120,18 +131,30 @@ async def traceMemoryUsage(
     if limitMegabytes <= 0:
         raise ValueError("limitMegabytes must be positive")
 
-    tracemalloc.start()
+    # ! tracemalloc is process global. Two overlapping profiles had the
+    # first to finish call stop(), so the second read (0, 0), computed a
+    # zero footprint and recommended a concurrency equal to the entire
+    # memory budget - recreating the maxConcurrency = 2_500 mistake this
+    # library exists to prevent. The lock serialises them, and stopping
+    # is conditional so a host that was already tracing keeps its trace
+    async with _PROFILE_LOCK:
+        alreadyTracing = tracemalloc.is_tracing()
 
-    # ! initialised before the try, so a failing operation propagates its
-    # own exception instead of a NameError from the finally clause
-    current = 0
-    peak = 0
+        if not alreadyTracing:
+            tracemalloc.start()
 
-    try:
-        await operation()
-        current, peak = tracemalloc.get_traced_memory()
-    finally:
-        tracemalloc.stop()
+        # ! initialised before the try, so a failing operation
+        # propagates its own exception instead of a NameError from the
+        # finally clause
+        current = 0
+        peak = 0
+
+        try:
+            await operation()
+            current, peak = tracemalloc.get_traced_memory()
+        finally:
+            if not alreadyTracing:
+                tracemalloc.stop()
 
     currentMegabytes = current / BYTES_PER_MEGABYTE
     peakMegabytes = peak / BYTES_PER_MEGABYTE
@@ -143,12 +166,29 @@ async def traceMemoryUsage(
 
     perTask = peakMegabytes + buffer
 
-    # ? a peak below the measurement floor would divide into a nonsense
-    # ceiling, so anything immeasurably small yields the budget itself
-    concurrency = (
-        max(1, math.floor(limitMegabytes / perTask)) if perTask > 0
-        else max(1, math.floor(limitMegabytes))
-    )
+    # ! an unmeasurably small peak means the measurement failed, not
+    # that the operation is free. Returning floor(limitMegabytes) here
+    # recommended a concurrency of 2048 for a 2 GB budget, which the
+    # docstring then invites the caller to feed straight into
+    # BlockingCaller. One is the only safe answer
+    if perTask <= 0:
+        logger.warning(
+            "measured a zero memory footprint, which usually means the "
+            "operation allocated nothing observable; recommending a "
+            "concurrency of 1 rather than guessing"
+        )
+
+        concurrency = 1
+    else:
+        # ! capped. Memory is not the binding constraint here, broker
+        # rate limits are: a cheap operation divides into a large budget
+        # and yields tens of thousands, and the docstring invites the
+        # caller to feed that straight into BlockingCaller. That is the
+        # maxConcurrency = 2_500 mistake this library exists to prevent,
+        # arrived at by arithmetic instead of by guesswork
+        concurrency = max(
+            1, min(maximumConcurrency, math.floor(limitMegabytes / perTask))
+        )
 
     profile = MemoryProfile(
         currentMegabytes = currentMegabytes,
@@ -165,5 +205,6 @@ async def traceMemoryUsage(
 
 __all__ = [
     "MemoryProfile", "traceMemoryUsage",
-    "DEFAULT_BUFFER_FRACTION", "BYTES_PER_MEGABYTE"
+    "DEFAULT_BUFFER_FRACTION", "BYTES_PER_MEGABYTE",
+    "MAXIMUM_RECOMMENDED_CONCURRENCY"
 ]

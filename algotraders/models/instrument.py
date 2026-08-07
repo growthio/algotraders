@@ -113,6 +113,17 @@ class InstrumentKey(AlgoTradersModel):
                 f"trading symbol may not contain {KEY_SEPARATOR!r}: {value!r}"
             )
 
+        # ! re-checked after upper(). The max_length constraint is a
+        # core-schema check that runs BEFORE this validator, and case
+        # folding can lengthen a string - "ﬁ".upper() is "FI" - so 64
+        # ligature characters passed the constraint and were stored as
+        # 128
+        if len(symbol) > 64:
+            raise ValueError(
+                f"trading symbol is {len(symbol)} characters after "
+                f"normalisation, which exceeds the 64 character limit"
+            )
+
         return symbol
 
 
@@ -166,6 +177,9 @@ class InstrumentKey(AlgoTradersModel):
         which instrument master file to download.
         """
 
+        # ? commodity and currency are tested first because they are
+        # also members of DERIVATIVE_EXCHANGES; ordering is what makes
+        # the more specific answer win, and a test pins each mapping
         if self.exchange in (Exchange.MCX, Exchange.NCDEX):
             return Segment.COMMODITY
 

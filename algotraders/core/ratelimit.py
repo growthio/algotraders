@@ -183,11 +183,30 @@ class TokenBucket:
     def available(self) -> float:
         """
         Tokens currently available, refilling first.
+
+        Clamped at zero, so a bucket carrying debt reports empty. Use
+        :attr:`balance` on a health endpoint where the distinction
+        between "momentarily empty" and "four seconds behind" matters.
+        """
+
+        return max(0.0, self.balance)
+
+
+    @property
+    def balance(self) -> float:
+        """
+        Raw token balance, which may be **negative**.
+
+        A bucket goes into debt when a call was admitted against a
+        deficit, and that debt is worked off over the following window.
+        Reporting it clamped hid the difference between a bucket that is
+        briefly empty and one that is seconds behind, which is exactly
+        what an operator needs to see.
         """
 
         self.__refill__()
 
-        return max(0.0, self.tokens)
+        return self.tokens
 
 
     def __repr__(self) -> str:

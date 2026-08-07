@@ -110,8 +110,14 @@ class BrokerConfigurationError(BrokerError):
         self.name = name
         self.requirements = requirements
 
+        # ? joined rather than interpolated as a list repr, which
+        # rendered as "but ['fyers-apiv3>=3.1.7'] not met"
+        packages = ", ".join(str(entry) for entry in requirements)
+
         super().__init__(
-            f"Broker {name} is available, but {requirements} not met."
+            f"broker {name} is registered but its requirements are not "
+            f"installed: {packages}. Install it with "
+            f"pip install algotraders[{name}]"
         )
 
 
@@ -416,11 +422,19 @@ class OrderError(AlgoTradersError):
 
 class InvalidOrder(OrderError):
     """
-    An order failed local validation and was never sent to the broker.
+    An order was rejected before reaching the broker.
 
-    Raised by the ``OrderRequest`` validators for things like a limit
-    order with no limit price, or a quantity that is not a multiple of
-    the instrument lot size.
+    Raised by the broker mappers when an order type has no vendor
+    equivalent.
+
+    :NOTE: Constructing an ``OrderRequest`` with impossible fields
+        raises :class:`pydantic.ValidationError`, **not** this. The
+        model validators run inside pydantic, which wraps any
+        ``ValueError`` they raise. That is the right behaviour - it
+        gives per-field detail and FastAPI turns it into a 422
+        automatically - but it does mean ``except InvalidOrder`` will
+        not catch a malformed request. Catch ``ValidationError`` for
+        construction and this for dispatch.
     """
 
     pass
@@ -493,3 +507,23 @@ class SubscriptionLimitExceeded(StreamError):
             f"{brokerName} allows {limit:,} instruments per connection, "
             f"{requested:,} requested"
         )
+
+
+__all__ = [
+    "AlgoTradersError", "MissingDependency",
+
+    "BrokerError", "UnavailableBroker", "BrokerConfigurationError",
+    "TransientBrokerError", "RateLimitExceeded", "DailyQuotaExhausted",
+
+    "AuthenticationError", "InvalidCredentials", "AuthorizationRequired",
+    "InvalidLoginState", "TokenExpiredError",
+
+    "InstrumentError", "InstrumentNotFound", "InvalidInstrumentKey",
+    "InstrumentMasterUnavailable",
+
+    "DataError", "UnsupportedTimeframe", "DataSubscriptionRequired",
+
+    "OrderError", "InvalidOrder", "OrderRejected",
+
+    "StreamError", "SubscriptionLimitExceeded"
+]

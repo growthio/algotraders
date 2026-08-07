@@ -103,7 +103,12 @@ class TokenBundle(AlgoTradersModel):
     expiresAt : Optional[dt.datetime] = None
     refreshExpiresAt : Optional[dt.datetime] = None
     scope : Optional[str] = None
-    metadata : Dict[str, Any] = Field(default_factory = dict)
+
+    # ! excluded from serialisation. The class contract is that dumping
+    # a bundle never discloses a credential, and a free-form dict is the
+    # one field that could carry one - Kite already puts a publicToken
+    # here. Enforced by the type rather than by convention
+    metadata : Dict[str, Any] = Field(default_factory = dict, exclude = True)
 
     _normaliseIssuedAt = field_validator("issuedAt")(requireAwareIST)
     _normaliseExpiresAt = field_validator("expiresAt")(requireAwareIST)
@@ -342,6 +347,26 @@ class SessionStatus(AlgoTradersModel):
     secondsRemaining : Optional[float] = None
     canRefresh : bool = False
     capabilities : list = Field(default_factory = list)
+
+    _normaliseExpiresAt = field_validator("expiresAt")(requireAwareIST)
+
+
+    @field_validator("clientId")
+    @classmethod
+    def maskClientId(cls, value : str) -> str:
+        """
+        Mask the client id here rather than trusting every call site.
+
+        The class docstring promised this was safe to return to a
+        frontend "by construction", and nothing enforced it: masking
+        happened at the single call site that built one. A second call
+        site would have published a real account number from a model
+        documented as safe.
+        """
+
+        from algotraders.logger import MASK, maskSecret
+
+        return value if value.startswith(MASK) else maskSecret(value)
 
 
 def _nextRollover(reference : dt.datetime, hour : int) -> dt.datetime:

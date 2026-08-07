@@ -115,6 +115,7 @@ class BlockingCaller:
         # at min(32, cpu + 4), so without this the semaphore admits work
         # that then queues invisibly behind a thread pool it never sees
         self.__ownsExecutor__ = executor is None
+        self.__closed__ = False
         self.executor = executor or cf.ThreadPoolExecutor(
             max_workers = maxConcurrency,
             thread_name_prefix = THREAD_NAME_PREFIX
@@ -162,6 +163,17 @@ class BlockingCaller:
             it onto a DTO is the broker mapper's job, not this one's.
         """
 
+        # ! a closed caller fails with a sentence rather than the raw
+        # "cannot schedule new futures after shutdown" from the pool,
+        # which is not in DEFAULT_RETRYABLE and propagates unexplained.
+        # __aexit__ closes unconditionally, so reusing a caller after
+        # one `async with` block is an easy mistake to make
+        if self.__closed__:
+            raise RuntimeError(
+                "this BlockingCaller is closed; build a new session "
+                "rather than reusing one past its context manager"
+            )
+
         limiter = self.policy.limiterFor(endpointClass)
         bound = functools.partial(function, *args, **kwargs)
 
@@ -193,16 +205,20 @@ class BlockingCaller:
         lifetime belongs to whoever passed it in.
         """
 
+        self.__closed__ = True
+
         if not self.__ownsExecutor__:
             return
 
-        loop = asyncio.get_running_loop()
-
-        # ? shutdown joins worker threads, so it is itself blocking and
-        # belongs off the event loop
-        await loop.run_in_executor(
-            None, functools.partial(self.executor.shutdown, wait = True)
-        )
+        # ! not run_in_executor(None, ...). That lazily instantiates the
+        # interpreter's DEFAULT pool - the very thing this class exists
+        # to avoid - purely to perform one shutdown, and it deadlocks if
+        # the host has saturated that pool with work waiting on us.
+        #
+        # cancel_futures drops queued calls that have not started;
+        # wait = False returns immediately, and ThreadPoolExecutor's own
+        # atexit hook still joins the threads that are already running
+        self.executor.shutdown(wait = False, cancel_futures = True)
 
 
     async def __aenter__(self) -> "BlockingCaller":

@@ -94,6 +94,13 @@ def splitDateRange(
     if maxSpan <= dt.timedelta(0):
         raise ValueError(f"maxSpan must be positive, got {maxSpan}")
 
+    # ! a negative step at least as large as maxSpan makes the cursor
+    # non-increasing, so the loop never terminates and the window list
+    # grows until the process dies. maxSpan was validated and step was
+    # not, which is the kind of asymmetry that survives review
+    if step < dt.timedelta(0):
+        raise ValueError(f"step must not be negative, got {step}")
+
     zone = timezone or IST
 
     first = toIST(start).astimezone(zone)

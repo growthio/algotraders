@@ -24,6 +24,8 @@ that this library deliberately does not hold; they belong to the host.
 What lives here is the subset that can be decided from the order alone.
 """
 
+import math
+import decimal
 import datetime as dt
 
 from typing import Any, Dict, Optional
@@ -133,6 +135,103 @@ class OrderRequest(AlgoTradersModel):
 
 
     @model_validator(mode = "after")
+    def validateStopLossDirection(self) -> "OrderRequest":
+        """
+        Enforce the trigger and limit ordering a stop loss requires.
+
+        A buy stop triggers on the way up and must be willing to pay at
+        least the trigger, so its limit sits at or above it; a sell stop
+        is the mirror. Getting this backwards produces an order the
+        exchange refuses, and it is fully decidable from the order
+        alone, which is the standard this module holds itself to.
+
+        :raises ValueError: The prices describe an order that cannot
+            execute in the stated direction.
+        """
+
+        if self.orderType is not OrderType.STOP_LOSS:
+            return self
+
+        if self.side is OrderSide.BUY and self.limitPrice < self.triggerPrice:
+            raise ValueError(
+                f"a buy stop loss needs limitPrice >= triggerPrice, got "
+                f"{self.limitPrice} < {self.triggerPrice}"
+            )
+
+        if self.side is OrderSide.SELL and self.limitPrice > self.triggerPrice:
+            raise ValueError(
+                f"a sell stop loss needs limitPrice <= triggerPrice, got "
+                f"{self.limitPrice} > {self.triggerPrice}"
+            )
+
+        return self
+
+
+    @model_validator(mode = "after")
+    def validateTickSize(self) -> "OrderRequest":
+        """
+        Reject a price that is not a whole multiple of the tick size.
+
+        ``Instrument.tickSize`` was carried and never checked, so an
+        order priced at 100.03 on a five paise tick validated locally
+        and was refused by the exchange - the same failure class as a
+        bad lot multiple, which this module already guards.
+
+        Comparison is done in :class:`~decimal.Decimal`. A float modulo
+        against 0.05 produces a non-zero remainder for prices that are
+        perfectly valid, which would reject good orders.
+
+        :raises ValueError: The price is off tick.
+        """
+
+        tickSize = self.instrument.tickSize
+
+        if not tickSize:
+            return self
+
+        for label, price in (
+            ("limitPrice", self.limitPrice),
+            ("triggerPrice", self.triggerPrice)
+        ):
+            if price is None:
+                continue
+
+            if decimal.Decimal(str(price)) % tickSize != 0:
+                raise ValueError(
+                    f"{label} {price} is not a multiple of the "
+                    f"{self.instrument.key.tradingSymbol} tick size "
+                    f"{tickSize}"
+                )
+
+        return self
+
+
+    @model_validator(mode = "after")
+    def validateProductType(self) -> "OrderRequest":
+        """
+        Refuse the product types this model cannot express.
+
+        Cover and bracket orders carry a mandatory stop loss leg, and
+        bracket orders a target as well. ``OrderRequest`` has no field
+        for either, so accepting one would send an order the broker
+        rejects while looking locally valid. Refusing is honest; the
+        seam is reserved rather than half implemented.
+
+        :raises ValueError: The product type needs legs this model does
+            not carry.
+        """
+
+        if self.productType in (ProductType.COVER, ProductType.BRACKET):
+            raise ValueError(
+                f"{self.productType.value} orders require a stop loss leg "
+                "that OrderRequest does not model; place them through the "
+                "broker's own API until the placeBasket seam is implemented"
+            )
+
+        return self
+
+
+    @model_validator(mode = "after")
     def validateQuantity(self) -> "OrderRequest":
         """
         Check disclosed quantity and lot size multiples.
@@ -159,10 +258,16 @@ class OrderRequest(AlgoTradersModel):
         if lotSize and self.quantity % lotSize:
             lots = self.quantity / lotSize
 
+            # ! round() is banker's rounding and can suggest a SMALLER
+            # size than asked for - lotSize 2, quantity 5 suggested 4 -
+            # and for a sub-lot quantity it suggested 0, which fails the
+            # gt = 0 constraint. Always round up to the next whole lot
+            suggestion = math.ceil(lots) * lotSize
+
             raise ValueError(
                 f"quantity {self.quantity} is not a multiple of the "
                 f"{self.instrument.key.tradingSymbol} lot size {lotSize} "
-                f"({lots:.2f} lots); use {round(lots) * lotSize} instead"
+                f"({lots:.2f} lots); use {suggestion} instead"
             )
 
         return self
@@ -182,16 +287,28 @@ class OrderRequest(AlgoTradersModel):
     @property
     def notionalValue(self) -> Optional[float]:
         """
-        Approximate order value, based on the limit price.
+        Cash outlay this order commits, at the price it carries.
 
-        ``None`` for a market order, since there is no price to compute
-        against until it fills.
+        ! For an option this is the **premium**, not the exposure. A
+        NIFTY 24800 call at 120 with one lot of 65 returns 7,800, while
+        the position controls roughly 1.6 million of underlying. Do not
+        use this as a risk figure for derivatives.
+
+        :rtype:   Optional[float]
+        :returns: Price times quantity, using the limit price where
+            there is one and the trigger price for a stop loss market
+            order. ``None`` for a plain market order, which has no price
+            to compute against until it fills.
         """
 
-        if self.limitPrice is None:
-            return None
+        price = self.limitPrice
 
-        return self.limitPrice * self.quantity
+        if price is None and self.orderType is OrderType.STOP_LOSS_MARKET:
+            # ? the trigger is the only price an SL-M carries, and it is
+            # a far better estimate than reporting nothing
+            price = self.triggerPrice
+
+        return None if price is None else price * self.quantity
 
 
 class OrderResponse(AlgoTradersModel):

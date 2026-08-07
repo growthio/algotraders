@@ -229,8 +229,12 @@ TIMEFRAME_DATABASE_VALUES = (
 # inventing its own message
 AGGREGATE_ONLY_TIMEFRAMES = frozenset({Timeframe.MONTH_1, Timeframe.YEAR_1})
 
+# ? every venue that trades derivatives, including the commodity and
+# currency ones. NCDEX was missing, so it fell through to the capital
+# segment and resolved against the wrong instrument master
 DERIVATIVE_EXCHANGES = frozenset({
-    Exchange.NFO, Exchange.BFO, Exchange.MCX, Exchange.CDS, Exchange.BCD
+    Exchange.NFO, Exchange.BFO, Exchange.MCX, Exchange.NCDEX,
+    Exchange.CDS, Exchange.BCD
 })
 
 
