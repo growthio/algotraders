@@ -55,9 +55,10 @@ Handling the login redirect in the host.
 """
 
 import asyncio
+import inspect
 import datetime as dt
 
-from typing import Any, Callable, FrozenSet, Optional, Union
+from typing import Any, Callable, Dict, FrozenSet, Optional, Union
 
 from algotraders.auth.store import (
     BaseTokenStore, FileTokenStore
@@ -72,6 +73,7 @@ from algotraders.core.executor import (
 from algotraders.core.ratelimit import RateLimitPolicy
 from algotraders.core.retry import RetryPolicy
 from algotraders.errors import AuthorizationRequired, TokenExpiredError
+from algotraders.instruments.cache import InstrumentCache
 from algotraders.logger import getLogger, maskSecret
 from algotraders.models.auth import SessionStatus, TokenBundle
 from algotraders.models.enums import Capability
@@ -416,18 +418,35 @@ async def initialize(
         capabilities = frozenset(getattr(auth, "capabilities", frozenset()))
     )
 
-    session.api = _buildOptional(
-        interface.get("API"), session = session,
-        sessionManager = sessionManager, caller = caller,
-        clock = resolvedClock, credentials = resolvedCredentials
-    )
+    # ! everything past this point owns a thread pool. A factory that
+    # raises must not strand it, so the assembly is wrapped rather than
+    # left to the caller to clean up after an exception it never saw
+    try:
+        # ? the resolver is built FIRST because the API surface needs it:
+        # every portfolio row arrives carrying a vendor symbol and has to
+        # be resolved back to a canonical key before the host can join it
+        # against anything it already stored
+        session.resolver = _buildOptional(
+            interface.get("RESOLVER"),
+            cache = InstrumentCache(
+                directory = runtimeConfig(envFile).cacheDirectory,
+                clock = resolvedClock
+            ),
+            clock = resolvedClock,
+            session = session, sessionManager = sessionManager,
+            caller = caller, credentials = resolvedCredentials
+        )
 
-    session.resolver = _buildOptional(
-        interface.get("RESOLVER"), session = session,
-        sessionManager = sessionManager, caller = caller,
-        clock = resolvedClock, credentials = resolvedCredentials,
-        cacheDirectory = runtimeConfig(envFile).cacheDirectory
-    )
+        session.api = _buildOptional(
+            interface.get("API"), session = session,
+            sessionManager = sessionManager, caller = caller,
+            clock = resolvedClock, credentials = resolvedCredentials,
+            resolver = session.resolver
+        )
+    except BaseException:
+        await caller.close()
+
+        raise
 
     logger.info("initialized %s session for %s", brokerName,
                 maskSecret(clientId))
@@ -467,6 +486,11 @@ def _buildOptional(factory : Any, **kwargs : Any) -> Any:
     Not every broker ships a resolver or a trading surface, and a
     registry entry may legitimately omit either.
 
+    Arguments the factory cannot accept are dropped rather than passed,
+    so a broker whose constructor takes a narrower set than the assembly
+    offers still builds. A *missing required* argument still raises
+    ``TypeError``, which is the failure worth keeping loud.
+
     :rtype:   Any
     :returns: The constructed object, or ``None`` when no factory was
         registered.
@@ -475,7 +499,57 @@ def _buildOptional(factory : Any, **kwargs : Any) -> Any:
     if factory is None:
         return None
 
-    return factory(**kwargs)
+    return factory(**_acceptedArguments(factory, kwargs))
+
+
+def _acceptedArguments(
+    factory : Any, offered : Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Narrow a keyword mapping to what a callable will actually accept.
+
+    ..versionchanged:: 2026-08-06 Added After a Silent Assembly Failure
+        ``initialize`` previously handed every broker surface one fixed
+        keyword set. That set drifted from the resolver constructors and
+        produced a ``TypeError`` for every real broker, which no test
+        caught because the only fake broker registered no resolver.
+        Filtering removes the coupling between the assembly site and
+        each constructor's exact signature.
+
+    :type  factory: Any
+    :param factory: The callable about to be invoked.
+
+    :type  offered: Dict[str, Any]
+    :param offered: Everything the assembly is willing to supply.
+
+    :rtype:   Dict[str, Any]
+    :returns: The subset the callable declares. Returned unchanged when
+        the callable takes ``**kwargs`` or cannot be introspected.
+    """
+
+    try:
+        parameters = inspect.signature(factory).parameters.values()
+    except (TypeError, ValueError):
+        # ? a C extension or a builtin with no signature; hand it
+        # everything and let it complain if it disagrees
+        return offered
+
+    if any(
+        entry.kind is inspect.Parameter.VAR_KEYWORD for entry in parameters
+    ):
+        return offered
+
+    accepted = {
+        entry.name for entry in parameters
+        if entry.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY
+        )
+    }
+
+    return {
+        name : value for name, value in offered.items() if name in accepted
+    }
 
 
 __all__ = ["BrokerSession", "initialize", "initializeSync"]
