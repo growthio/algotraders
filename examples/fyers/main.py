@@ -4,128 +4,154 @@
 Main Script to Download Historical Data using FYERS API (v3) Services
 ---------------------------------------------------------------------
 
-An example script that uses the :mod:`algotraders.brokers.fyers` to
-download historic security data for a given time period using the
-asynchronous function implementation with rate limitations. Currently,
-the example is designed with static symbols list (TODO), but the
-approach is designed such that this can be extended for any symbols.
+An example script that uses :mod:`algotraders` to download historic
+security data for a given time period and write it to stdout as JSON
+lines.
+
+..versionchanged:: 2026-08-06 The Database Is Gone, and So Is dispatch()
+    The previous version did two things that belonged somewhere else.
+    It opened a SQLAlchemy engine and called ``to_sql``, which made an
+    integration library aware of a table; persistence now lives in the
+    host application, and ``examples/host/`` shows how.
+
+    It also carried a ``dispatch()`` helper that hand-built monthly date
+    buckets and fanned them out at ``maxConcurrency = 2_500``. That
+    existed only to work around a missing chunker: it issued twelve
+    requests per symbol per year regardless of what Fyers actually
+    permits, and the imaginary concurrency queued invisibly behind a
+    blocking SDK call. Range splitting is now internal to
+    ``fetchCandles`` and sized from the broker's published caps, so the
+    helper is deleted rather than moved.
+
+**Usage**
+
+.. code-block:: shell
+
+    $ export ALGOTRADERS_FYERS_CLIENT_ID=XXXXXXXXXX-100
+    $ export ALGOTRADERS_FYERS_SECRET_KEY=...
+    $ python examples/fyers/main.py NSE:SBIN:EQ NSE:TCS:EQ > candles.jsonl
+
+On the first run of the day there is no stored token, so the script
+prints a login URL and exits. Visit it, authenticate, then re-run with
+the code the broker returned:
+
+.. code-block:: shell
+
+    $ python examples/fyers/main.py --auth-code <code> NSE:SBIN:EQ
+
+:NOTE: Output uses the ``snake_case`` alias spelling, so it can be piped
+    into a loader without further translation.
 """
 
+import sys
+import json
 import asyncio
-import calendar
+import argparse
 import datetime as dt
-import zoneinfo as zi
-from typing import Callable
+
+from typing import List, Optional
 
 import algotraders
-import pandas as pd
-import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import ENUM as pg_ENUM
-from tqdm import tqdm
 
-def dispatch(symbols : list[str]) -> list:
+from algotraders.errors import AlgoTradersError, AuthorizationRequired
+from algotraders.models import Timeframe
+
+
+def parseArguments(argv : Optional[List[str]] = None) -> argparse.Namespace:
     """
-    Builds load dispatcher for the asynchronous function operations
-    which takes in all the input symbols and creates a monthly bucket
-    that can be unpacked to API asynchronous data calling module.
-    """
+    Parse the command line.
 
-    dates = [
-        (
-            dt.datetime(year, month, 1, 9, 15),
-            dt.datetime(year, month, calendar.monthrange(year, month)[1], 15, 30)
-        )
-        for year in range(2018, 2019) for month in range(1, 13)
-    ]
+    :type  argv: Optional[List[str]]
+    :param argv: Arguments to parse. Reads ``sys.argv`` when omitted.
 
-    return [
-        (start, end, f"NSE:{symbol}-EQ")
-        for start, end in dates for symbol in symbols
-    ]
-
-
-async def main(api : Callable) -> list[dict]:
-    """
-    Gathers all asynchronous calls to get the historcal data from the
-    underlying API and then returns a list of dictionary that can be
-    readily converted to a :mod:`pd.DataFrame` so that the data can
-    be easily stored in a database for file object.
+    :rtype:   argparse.Namespace
+    :returns: The parsed arguments.
     """
 
-    dispatched = dispatch(
-        symbols = pd.read_csv("symbols.csv")["exchange_symbol"].unique()
+    parser = argparse.ArgumentParser(
+        description = "Download Fyers historical candles as JSON lines."
     )
-    tasks = [
-        asyncio.create_task(
-            api.fetchData(
-                symbol = symbol, timeframe = "1", dateRange = (start, end)
-            )
+
+    parser.add_argument(
+        "instruments", nargs = "+",
+        help = "canonical instrument keys, for example NSE:SBIN:EQ"
+    )
+    parser.add_argument(
+        "--timeframe", default = "1m",
+        choices = [member.value for member in Timeframe],
+        help = "candle granularity (default: 1m)"
+    )
+    parser.add_argument(
+        "--days", type = int, default = 30,
+        help = "how many days back to fetch (default: 30)"
+    )
+    parser.add_argument(
+        "--auth-code", dest = "authCode", default = None,
+        help = "authorization code returned by the broker redirect"
+    )
+    parser.add_argument(
+        "--concurrency", type = int, default = 5,
+        help = "simultaneous broker calls (default: 5)"
+    )
+
+    return parser.parse_args(argv)
+
+
+async def main(argv : Optional[List[str]] = None) -> int:
+    """
+    Fetch candles for every requested instrument and print them.
+
+    :rtype:   int
+    :returns: A process exit status. ``2`` means an interactive login is
+        needed, which is a normal first-run outcome rather than a fault.
+    """
+
+    arguments = parseArguments(argv)
+
+    try:
+        session = await algotraders.initialize(
+            broker = "fyers", authCode = arguments.authCode,
+            maxConcurrency = arguments.concurrency
         )
-        for start, end, symbol in dispatched
-    ]
+    except AuthorizationRequired as challenge:
+        print(
+            "No usable session. Open the URL below, authenticate, then "
+            "re-run with --auth-code <code>.\n", file = sys.stderr
+        )
+        print(challenge.loginURL, file = sys.stderr)
 
-    with tqdm(total = len(tasks), desc = "Fetching Data") as pbar:
-        for task in tasks:
-            task.add_done_callback(lambda _ : pbar.update())
-        responses = await asyncio.gather(*tasks, return_exceptions = True)
+        return 2
 
-    candleData = []
-    for (*_, symbol), response in zip(dispatched, responses):
-        if isinstance(response, Exception) or not isinstance(response, dict):
-            continue # no response; skip the object
-        elif isinstance(response, dict) and "candles" not in response.keys():
-            continue # no valid candle data; need to be logged
-        else:
-            candleData.extend(
-                [list(row) + [symbol] for row in response["candles"]]
+    end = session.clock.now()
+    start = end - dt.timedelta(days = arguments.days)
+    timeframe = Timeframe(arguments.timeframe)
+
+    async with session:
+        # ? one refresh populates the instrument master. Resolution is
+        # local afterwards, so an unknown symbol fails immediately
+        # instead of costing a rate limited round trip to find out
+        await session.resolver.refresh()
+
+        for key in arguments.instruments:
+            instrument = await session.resolver.resolve(key)
+
+            candles = await session.api.fetchCandles(
+                instrument = instrument, timeframe = timeframe,
+                dateRange = (start, end)
             )
 
-    return candleData
+            for candle in candles:
+                print(json.dumps(candle.toRecord()))
+
+            print(f"{key}: {len(candles):,} candles", file = sys.stderr)
+
+    return 0
 
 
 if __name__ == "__main__":
-    broker = algotraders.brokers.getBrokerInterface("fyers")
+    try:
+        raise SystemExit(asyncio.run(main()))
+    except AlgoTradersError as error:
+        print(f"{type(error).__name__}: {error}", file = sys.stderr)
 
-    # set credentials, and get the token to initialize services
-    # and, login to use the services (generates access token)
-    session = broker["AUTH"](
-        username = "", password = ""
-    ).login(accessToken = open("token", "r").read().strip())
-
-    # create api object, this will be used for all other operations
-    api = broker["API"](
-        sessionManager = session, maxConcurrency = 2_500
-    )
-
-    responses = asyncio.run(main(api = api))
-    responses = pd.DataFrame(responses, columns = [
-        "effective_time", "open_price", "high_price", "low_price",
-        "close_price", "volume", "exchange_symbol_ext"
-    ])
-
-    responses["timeframe"] = "1m"
-    responses["ticker_data_source_id"] = "FYERS"
-    responses["effective_time"] = responses["effective_time"].apply(
-        lambda x : dt.datetime.fromtimestamp(x, tz = zi.ZoneInfo("Asia/Kolkata"))
-    )
-
-    # ? create engine object, and then insert the data into table
-    engine = sa.create_engine(
-        ""
-    )
-
-    # ! create_type=False: the ENUM already exists in DB, don't recreate it
-    timeframe_type = pg_ENUM(
-        "1m", "3m", "5m", "15m", "1h", "1D", "1M", "1Y",
-        name = "timeframe_value",
-        schema = "private",
-        create_type = False
-    )
-
-    print(f"Trying to Insert {responses.shape[0]:,} Records.")
-    responses.to_parquet("data.parquet", index = False)
-    responses.to_sql(
-        "security_prices_tx", engine, schema = "private",
-        index = False, if_exists = "append",
-        dtype = {"timeframe" : timeframe_type}
-    )
+        raise SystemExit(1)

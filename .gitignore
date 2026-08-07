@@ -420,3 +420,26 @@ $RECYCLE.BIN/
 
 # Custom rules (everything added below won't be overriden by 'Generate .gitignore File' if you use 'Update' option)
 
+# AlgoTraders broker credentials and session tokens. A broker access
+# token is a bearer credential, it grants order placement on a live
+# DEMAT account. Nothing matching these patterns may ever be tracked.
+.token
+*.token
+token
+tokens/
+.tokens/
+.algotraders/
+
+# Runtime caches, instrument masters and downloaded market data. These
+# are regenerable and large enough to bloat the pack file.
+.cache/algotraders/
+instruments*.csv
+symbols.csv
+sym_details/
+*.parquet
+
+# Broker SDK log files. The Fyers SDK writes these into the process
+# working directory unless log_path is passed explicitly.
+fyersApi.log
+fyersRequests.log
+

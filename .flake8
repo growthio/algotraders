@@ -2,18 +2,26 @@
 # docs: https://flake8.pycqa.org/en/latest/user/configuration.html
 [flake8]
     # Exclude the directory to reduce .flake8 traverse
+    # ! patterns must not carry a trailing separator, flake8 matches them
+    # against the walked path and "examples/" silently never matched
     exclude =
         # .git is for version control, no need to traverse
-        .git/,
+        .git,
 
         # .github is standard file for compliance files
-        .github/,
+        .github,
 
         # ignore following house-keeping directories from checks
-        # ignore following house-keeping directories from checks
-        docs/,
-        assets/,
-        examples/
+        docs,
+        assets,
+        examples,
+
+        # build artefacts and virtual environments
+        build,
+        dist,
+        .venv,
+        __pycache__,
+        *.egg-info
 
     # Typically for a package, per-files ignore is very useful
     per-file-ignores =
@@ -21,6 +29,9 @@
         # F403 '... import *' used; unable to detect undefined names
         # F405 ... may be undefined, or defined from star imports
         algotraders/__init__.py: F401, F403, F405
+        algotraders/api.py: F401, F403, F405
+        algotraders/*/__init__.py: F401, F403, F405
+        tests/*/__init__.py: F401, F403, F405
 
     # Recommended to restrict to 79 characters (PEP 8), but set to 88
     # due to long URLs which can be ignored by setting line length.
@@ -38,4 +49,12 @@
         # E251 unexpected spaces around keyword / parameter equals
         E251,
         # E261 at least two spaces before inline comment
-        E261
+        E261,
+        # E302 expected 2 blank lines before a top level definition. The
+        # house style keeps a single blank line between the import block
+        # and the first class, see algotraders/brokers/base.py
+        E302,
+        # E303 too many blank lines. The house style separates methods
+        # inside a class by two blank lines, not PEP 8's one, which is
+        # what the python-code-format skill template prescribes
+        E303

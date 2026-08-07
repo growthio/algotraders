@@ -2,12 +2,77 @@
 
 """
 Custom Errors/Warnings for AlgoTraders Module
+==============================================
+
+Re-exports the whole exception hierarchy so callers import from one
+place. See :mod:`algotraders.errors.errors` for the tree and for how
+each class maps onto a recovery action.
 """
 
 from algotraders.errors.errors import (
-    BrokerError, UnavailableBroker, BrokerConfigurationError
+    AlgoTradersError,
+    MissingDependency,
+
+    BrokerError,
+    UnavailableBroker,
+    BrokerConfigurationError,
+    TransientBrokerError,
+    RateLimitExceeded,
+    DailyQuotaExhausted,
+
+    AuthenticationError,
+    InvalidCredentials,
+    AuthorizationRequired,
+    InvalidLoginState,
+    TokenExpiredError,
+
+    InstrumentError,
+    InstrumentNotFound,
+    InvalidInstrumentKey,
+    InstrumentMasterUnavailable,
+
+    DataError,
+    UnsupportedTimeframe,
+    DataSubscriptionRequired,
+
+    OrderError,
+    InvalidOrder,
+    OrderRejected,
+
+    StreamError,
+    SubscriptionLimitExceeded
 )
 
 __all__ = [
-    "BrokerError", "UnavailableBroker", "BrokerConfigurationError"
+    "AlgoTradersError",
+    "MissingDependency",
+
+    "BrokerError",
+    "UnavailableBroker",
+    "BrokerConfigurationError",
+    "TransientBrokerError",
+    "RateLimitExceeded",
+    "DailyQuotaExhausted",
+
+    "AuthenticationError",
+    "InvalidCredentials",
+    "AuthorizationRequired",
+    "InvalidLoginState",
+    "TokenExpiredError",
+
+    "InstrumentError",
+    "InstrumentNotFound",
+    "InvalidInstrumentKey",
+    "InstrumentMasterUnavailable",
+
+    "DataError",
+    "UnsupportedTimeframe",
+    "DataSubscriptionRequired",
+
+    "OrderError",
+    "InvalidOrder",
+    "OrderRejected",
+
+    "StreamError",
+    "SubscriptionLimitExceeded"
 ]

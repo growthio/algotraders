@@ -1,0 +1,81 @@
+# Runs the pytest suite and scans the diff for leaked broker credentials.
+# The suite never contacts a broker: an autouse fixture in tests/conftest.py
+# blocks socket.connect, and anything marked "live" is deselected by default.
+
+name: Tests (pytest)
+
+on:
+  push:
+    branches: [ master, "refactor/**", "feature/**" ]
+  pull_request:
+    branches: [ master, "refactor/**" ]
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+
+    steps:
+    - uses: actions/checkout@v6
+    - name: Setup Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Installing Package Without Any Broker SDK
+      # ? deliberately omits the fyers/kite extras, so a green run proves
+      # the package imports and the core suite passes with no vendor SDK
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -e .[test,server]
+    - name: Running Test Suite
+      run: |
+        pytest --cov=algotraders --cov-report=term-missing --cov-fail-under=80
+
+  vendor:
+    name: Broker SDK Suite
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+    - name: Setup Python 3.12
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+    - name: Installing Package With Every Broker SDK
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -e .[all]
+    - name: Running Test Suite
+      run: pytest
+
+  secrets:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        # ! gitleaks needs the full history to scan the incoming commits
+        fetch-depth: 0
+    # ! gitleaks-action requires GITLEAKS_LICENSE for organisation
+    # accounts and fails the whole job without one. A secret scan that
+    # reliably red-builds gets ignored, and an ignored scan is worse
+    # than none, so the licensed path is soft-failed and a license-free
+    # scan runs unconditionally underneath it
+    - name: Scanning History for Leaked Credentials
+      uses: gitleaks/gitleaks-action@v2
+      continue-on-error: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+    - name: Fallback Secret Scan
+      run: |
+        # ? the container image needs no licence and gates the build
+        docker run --rm -v "$PWD:/repo" \
+          zricethezav/gitleaks:latest detect \
+          --source=/repo --redact --verbose --no-banner
