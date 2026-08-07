@@ -77,10 +77,18 @@ def test_publicSurfaceIsExported() -> None:
 LAYERING = {
     "algotraders/models" : {"errors", "models"},
     "algotraders/core" : {"errors", "models", "core"},
-    "algotraders/auth" : {"errors", "models", "core", "auth", "brokers"},
     "algotraders/instruments" : {"errors", "models", "core", "instruments"},
     "algotraders/streaming" : {
         "errors", "models", "core", "instruments", "streaming"
+    },
+
+    # ! `auth` is the composition root, not a peer layer. `initialize()`
+    # assembles a session out of every surface a broker registers, so it
+    # necessarily reaches upward into `brokers` and `instruments`. That
+    # is a deliberate exception, and it is why the entry point lives in
+    # exactly one module rather than being spread around
+    "algotraders/auth" : {
+        "errors", "models", "core", "auth", "brokers", "instruments"
     }
 }
 

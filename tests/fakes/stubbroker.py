@@ -13,17 +13,29 @@ resolution path taken: whether the stored token was reused, refreshed,
 or exchanged from an authorization code. Those three branches are the
 whole point of the entry point, and telling them apart from the outside
 is otherwise guesswork.
+
+..versionchanged:: 2026-08-06 Declares a Resolver and a Stream
+    The stub originally registered only ``API`` and ``AUTH``. That left
+    the resolver assembly in ``initialize`` completely unexercised, and
+    it was broken: it passed ``cacheDirectory`` to constructors that
+    require ``cache``, so every real broker raised ``TypeError`` while
+    the suite stayed green. A fake that is simpler than the thing it
+    stands in for tests the wrong shape, so this one now declares every
+    surface a real registry entry does.
 """
 
 import datetime as dt
 
-from typing import Any, FrozenSet, List, Optional
+from typing import Any, FrozenSet, List, Optional, Sequence
 
 from algotraders.config import BaseBrokerCredentials
 from algotraders.core.clock import BaseClock, SystemClock
 from algotraders.core.ratelimit import RateLimit, RateLimitPolicy
+from algotraders.instruments.base import BaseInstrumentResolver
+from algotraders.instruments.cache import InstrumentCache
 from algotraders.models.auth import LoginChallenge, TokenBundle, TokenPolicy
-from algotraders.models.enums import Capability
+from algotraders.models.enums import Capability, Segment
+from algotraders.models.instrument import Instrument, InstrumentKey
 
 STUB_LOGIN_URL = "https://stub.example.com/connect/login?api_key=stub"
 
@@ -173,9 +185,98 @@ class StubAPI:
     """
     Placeholder data surface, constructed by ``initialize`` when the
     registry entry names one.
+
+    Mirrors the real ``BaseBrokerClient`` constructor rather than
+    swallowing everything into ``**kwargs``, so a test can assert that
+    the assembly actually handed it a resolver.
     """
 
-    def __init__(self, **kwargs : Any) -> None:
-        self.kwargs = kwargs
-        self.sessionManager = kwargs.get("sessionManager")
-        self.caller = kwargs.get("caller")
+    def __init__(
+        self, sessionManager : Any = None, caller : Any = None,
+        clock : Optional[BaseClock] = None,
+        credentials : Optional[BaseBrokerCredentials] = None,
+        resolver : Any = None, session : Any = None, **extra : Any
+    ) -> None:
+        self.sessionManager = sessionManager
+        self.caller = caller
+        self.clock = clock
+        self.credentials = credentials
+        self.resolver = resolver
+        self.session = session
+        self.extra = extra
+
+
+class StubInstrumentResolver(BaseInstrumentResolver):
+    """
+    Resolver over a fixed two-instrument master.
+
+    Deliberately declares the same required ``cache`` and ``clock``
+    parameters as the real broker resolvers, with **no** ``**kwargs``
+    catch-all. That is the point: a stub that accepts anything would
+    have absorbed the wrong keyword set and hidden the defect this
+    exists to catch.
+    """
+
+    def __init__(
+        self, cache : InstrumentCache, clock : BaseClock,
+        segments : Optional[Sequence[Segment]] = None,
+        brokerName : str = "stub"
+    ) -> None:
+        super().__init__(
+            brokerName = brokerName, cache = cache, clock = clock,
+            segments = segments
+        )
+
+        self.downloadCalls = 0
+
+
+    async def downloadMaster(self, segment : Segment) -> List[Instrument]:
+        """
+        Return a fixed master, one instrument per supported segment.
+        """
+
+        self.downloadCalls += 1
+
+        if segment is not Segment.CAPITAL:
+            return []
+
+        return [
+            Instrument(
+                key = InstrumentKey.parse("NSE:SBIN:EQ"),
+                brokerSymbol = "NSE:SBIN-EQ", brokerToken = "3045",
+                lotSize = 1, source = "stub"
+            ),
+            Instrument(
+                key = InstrumentKey.parse("NSE:TCS:EQ"),
+                brokerSymbol = "NSE:TCS-EQ", brokerToken = "11536",
+                lotSize = 1, source = "stub"
+            )
+        ]
+
+
+    def toBrokerSymbol(self, instrument : Instrument) -> str:
+        """
+        Render the vendor symbol recorded in the master.
+        """
+
+        return instrument.brokerSymbol
+
+
+class StubStream:
+    """
+    Placeholder streaming surface.
+
+    Registered so the registry entry carries a ``STREAM`` the way a real
+    broker does. Nothing in ``initialize`` builds it yet - reaching a
+    stream from the public API is still an open gap.
+    """
+
+    def __init__(
+        self, sessionManager : Any = None, sink : Any = None,
+        clock : Optional[BaseClock] = None, resolver : Any = None,
+        **extra : Any
+    ) -> None:
+        self.sessionManager = sessionManager
+        self.sink = sink
+        self.clock = clock
+        self.resolver = resolver

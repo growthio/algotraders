@@ -50,6 +50,7 @@ def stubBroker() -> None:
     registryModule.registerBroker(
         "stub",
         API = "StubAPI", AUTH = "StubAuthentication",
+        RESOLVER = "StubInstrumentResolver", STREAM = "StubStream",
         PATH = "tests.fakes.stubbroker", REQUIRES = []
     )
 
@@ -258,6 +259,123 @@ async def test_sessionBuildsTheApiSurface(clock : FakeClock) -> None:
     assert session.api.sessionManager.token == "access-from-code"
 
     await session.close()
+
+
+async def test_sessionBuildsTheResolver(clock : FakeClock) -> None:
+    """
+    A broker declaring a ``RESOLVER`` gets one built.
+
+    This is the assertion whose absence hid a defect that made
+    ``initialize`` unusable: the assembly passed ``cacheDirectory`` to
+    constructors requiring ``cache``, so every real broker raised
+    ``TypeError``. The suite stayed green only because the fake broker
+    declared no resolver at all.
+    """
+
+    session = await initialize(
+        broker = "stub", credentials = CREDENTIALS,
+        tokenStore = MemoryTokenStore(), clock = clock, authCode = "code"
+    )
+
+    assert session.resolver is not None
+    assert session.resolver.brokerName == "stub"
+
+    # ? and it is functional, not merely constructed
+    instrument = await session.resolver.resolve("NSE:SBIN:EQ")
+
+    assert instrument.brokerSymbol == "NSE:SBIN-EQ"
+
+    await session.close()
+
+
+async def test_apiReceivesTheResolver(clock : FakeClock) -> None:
+    """
+    The API surface holds the *same* resolver instance as the session.
+
+    Without this the broker adapters fall through to their
+    ``self.resolver is None`` branch on every call, so every position
+    and holding is reported under a vendor symbol while candles use
+    canonical keys. A host joining the two matches zero rows, silently,
+    for every instrument.
+    """
+
+    session = await initialize(
+        broker = "stub", credentials = CREDENTIALS,
+        tokenStore = MemoryTokenStore(), clock = clock, authCode = "code"
+    )
+
+    assert session.api.resolver is not None
+    assert session.api.resolver is session.resolver
+
+    await session.close()
+
+
+async def test_assemblyFailureDoesNotStrandTheThreadPool(
+    clock : FakeClock, monkeypatch : pytest.MonkeyPatch
+) -> None:
+    """
+    A factory that raises must not leak the caller's executor.
+
+    ``initialize`` constructs a ``BlockingCaller``, and therefore a
+    thread pool, before it builds the broker surfaces. An exception
+    after that point used to escape with the pool still running and no
+    reference left to close it.
+    """
+
+    from tests.fakes import stubbroker
+
+    def exploding(**kwargs : object) -> object:
+        raise RuntimeError("broker surface is broken")
+
+    monkeypatch.setattr(stubbroker, "StubAPI", exploding)
+
+    with pytest.raises(RuntimeError):
+        await initialize(
+            broker = "stub", credentials = CREDENTIALS,
+            tokenStore = MemoryTokenStore(), clock = clock,
+            authCode = "code"
+        )
+
+    # ? every live thread from this test's pool should be gone; a
+    # stranded executor keeps non-daemon workers alive after the failure
+    import threading
+
+    assert not [
+        thread for thread in threading.enumerate()
+        if thread.name.startswith("algotraders") and thread.is_alive()
+    ]
+
+
+def test_optionalSurfacesToleratePartialSignatures() -> None:
+    """
+    A broker whose constructor accepts fewer arguments than the assembly
+    offers still builds.
+
+    The coupling between the assembly site and each constructor's exact
+    signature is what produced the original defect, so it is removed
+    rather than merely corrected.
+    """
+
+    from algotraders.auth.session import _buildOptional
+
+    class Narrow:
+        def __init__(self, clock : object) -> None:
+            self.clock = clock
+
+    built = _buildOptional(
+        Narrow, clock = "tick", sessionManager = object(),
+        caller = object(), credentials = object(), cache = object()
+    )
+
+    assert built.clock == "tick"
+
+    # ? a genuinely missing required argument still fails loudly
+    class NeedsCache:
+        def __init__(self, cache : object, clock : object) -> None:
+            self.cache = cache
+
+    with pytest.raises(TypeError):
+        _buildOptional(NeedsCache, clock = "tick")
 
 
 async def test_refreshIfNeededIsANoOpWhileLive(clock : FakeClock) -> None:

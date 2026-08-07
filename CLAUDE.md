@@ -71,9 +71,14 @@ Imports flow one way only. A test enforces this, so a violation fails CI rather 
 | :---: | --- |
 | `models` | `errors` only |
 | `core` | `models`, `errors` |
-| `auth`, `instruments`, `streaming` | `core` and below |
+| `instruments`, `streaming` | `core` and below |
 | `brokers/*` | everything above |
+| `auth` | everything - it is the composition root |
 | `transport` | everything |
+
+`auth` is the deliberate exception. `initialize()` assembles a session from every surface a broker
+registers, so it reaches upward into `brokers` and `instruments` by design. Keeping that reach confined to
+one module is the reason the entry point is not spread across the package.
 
 **No module may import a broker SDK at package import time.** Broker implementation modules under `brokers/fyers/` and
 `brokers/kite/` are the sole exception, because the registry only reaches them after the extra has been resolved.
