@@ -88,7 +88,8 @@ LAYERING = {
     # is a deliberate exception, and it is why the entry point lives in
     # exactly one module rather than being spread around
     "algotraders/auth" : {
-        "errors", "models", "core", "auth", "brokers", "instruments"
+        "errors", "models", "core", "auth", "brokers", "instruments",
+        "streaming"
     }
 }
 

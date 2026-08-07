@@ -72,7 +72,9 @@ from algotraders.core.executor import (
 )
 from algotraders.core.ratelimit import RateLimitPolicy
 from algotraders.core.retry import RetryPolicy
-from algotraders.errors import AuthorizationRequired, TokenExpiredError
+from algotraders.errors import (
+    AuthorizationRequired, MissingDependency, TokenExpiredError
+)
 from algotraders.instruments.cache import InstrumentCache
 from algotraders.logger import getLogger, maskSecret
 from algotraders.models.auth import SessionStatus, TokenBundle
@@ -121,8 +123,12 @@ class BrokerSession:
         self.bundle = bundle
         self.api = api
         self.resolver = resolver
-        self.stream = None
         self.caller = caller
+
+        # ? built lazily by stream(), because opening a socket is not
+        # something initialize() should do on the caller's behalf
+        self.streamFactory : Any = None
+        self.streamer : Any = None
         self.clock = clock or SystemClock()
         self.tokenStore = tokenStore
         self.capabilities = frozenset(capabilities)
@@ -255,22 +261,107 @@ class BrokerSession:
         self.bundle = bundle
         manager = self.auth.buildSessionManager(bundle)
 
-        for surface in (self.api, self.resolver, self.stream):
+        for surface in (self.api, self.resolver, self.streamer):
             if surface is not None and hasattr(surface, "sessionManager"):
                 surface.sessionManager = manager
 
+        # ? the socket authenticates with the raw token rather than the
+        # client object, so it needs the new value separately
+        if self.streamer is not None and hasattr(self.streamer, "accessToken"):
+            self.streamer.accessToken = bundle.accessToken.get_secret_value()
+
         return manager
+
+
+    async def stream(
+        self, sink : Any = None, autoStart : bool = True, **kwargs : Any
+    ) -> Any:
+        """
+        Open a live market data stream for this session.
+
+        Built on first use rather than during ``initialize``, because
+        opening a websocket is not something a caller implicitly asked
+        for by authenticating. Repeated calls return the same stream.
+
+        :type  sink: Any
+        :param sink: Where ticks are delivered. Defaults to a bounded
+            :class:`~algotraders.streaming.sinks.QueueTickSink`, which
+            drops the oldest tick when a consumer falls behind rather
+            than stalling the socket.
+
+        :type  autoStart: bool
+        :param autoStart: Connect immediately. Pass ``False`` to
+            subscribe before any data arrives.
+
+        **Example Usage**
+
+        .. code-block:: python
+
+            stream = await session.stream()
+            await stream.subscribe([instrument], mode = StreamMode.QUOTE)
+
+            while True:
+                tick = await stream.sink.get()
+
+        :raises MissingDependency: The broker registers no stream class.
+
+        :rtype:   Any
+        :returns: The broker's stream, already connected unless
+            ``autoStart`` was disabled.
+        """
+
+        from algotraders.streaming.sinks import QueueTickSink
+
+        if self.streamer is not None:
+            return self.streamer
+
+        if self.streamFactory is None:
+            raise MissingDependency(
+                self.brokerName,
+                packages = [f"{self.brokerName} streaming support"]
+            )
+
+        self.streamer = self.streamFactory(**_acceptedArguments(
+            self.streamFactory,
+            dict(
+                sessionManager = self.auth.buildSessionManager(self.bundle),
+                sink = sink or QueueTickSink(),
+                clock = self.clock,
+                resolver = self.resolver,
+                credentials = self.credentials,
+                accessToken = self.bundle.accessToken.get_secret_value(),
+                apiKey = self.credentials.clientId.get_secret_value(),
+                session = self,
+                **kwargs
+            )
+        ))
+
+        if autoStart:
+            await self.streamer.start()
+
+        return self.streamer
 
 
     async def close(self) -> None:
         """
         Release resources held by the session.
 
-        Shuts down the thread pool. Deliberately does **not** revoke the
-        broker token: the token is valid for the rest of the trading day
-        and another process, or the next request in this one, will want
-        it. Revocation is :meth:`logout`.
+        Shuts down the thread pool and closes any open stream.
+        Deliberately does **not** revoke the broker token: the token is
+        valid for the rest of the trading day and another process, or
+        the next request in this one, will want it. Revocation is
+        :meth:`logout`.
         """
+
+        if self.streamer is not None:
+            try:
+                await self.streamer.stop()
+            except Exception as error:
+                logger.debug(
+                    "stream shutdown raised %s", type(error).__name__
+                )
+
+            self.streamer = None
 
         if self.caller is not None:
             await self.caller.close()
@@ -474,6 +565,11 @@ async def initialize(
             clock = resolvedClock, credentials = resolvedCredentials,
             resolver = session.resolver
         )
+
+        # ? kept as a factory, not built. Opening a websocket is a
+        # separate decision from authenticating, so session.stream()
+        # constructs it on first use
+        session.streamFactory = interface.get("STREAM")
     except BaseException:
         await caller.close()
 

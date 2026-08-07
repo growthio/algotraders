@@ -157,7 +157,11 @@ the semaphore decorative and the concurrency imaginary. The replacement rules:
     it risks a double fill. `EndpointClass.ORDER` uses `RetryPolicy(maxAttempts = 1)` and a documented reconcile path.
   * **Rate limit buckets are shared, not per endpoint.** Fyers publishes one app wide quota; building a separate bucket
     per endpoint class enforces it several times over and is what produced 170,132 HTTP 429 responses in the captured
-    log.
+    log. Shared buckets need a shared **lock** too, which lives on `RateLimitPolicy`: a lock per limiter let every
+    endpoint class observe and consume the same token concurrently.
+  * **A refreshed token must be rebound, not just stored.** `buildSessionManager` bakes the token into the vendor client
+    at construction, so `BrokerSession.rebind` reassigns it across the api, resolver and stream. Updating `bundle` alone
+    produces a refresh that reports success while every later call fails authentication.
 
 ## Secret Handling
 
@@ -173,6 +177,13 @@ A broker access token is a bearer credential that can place live orders. Treat i
     which is how a 570,646 line log file ended up committed to `examples/fyers/`.
   * `FileTokenStore` is the development default only. It is split brain under multi worker uvicorn. Production hosts
     implement `BaseTokenStore` over their own Postgres; it is three synchronous methods.
+  * A stored bundle is verified against the broker and client it was requested for. The filename is a hash index, not
+    proof of ownership, and without the check anyone able to write into the token directory can make the process trade
+    their account.
+  * `createRouter` refuses to build without an auth dependency. These routes expose positions, holdings, the order book
+    and a login URL carrying the client id.
+  * The OAuth `state` is minted server side by the router, then validated and burned before the code is exchanged.
+    Never complete a login against a state this process did not issue.
 
 Environment variables, all optional at import time and validated on use:
 

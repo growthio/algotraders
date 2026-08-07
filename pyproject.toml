@@ -44,20 +44,24 @@ classifiers = [
 # directly as a FastAPI response model, and pydantic-settings resolves
 # credentials from the environment with a dotenv fallback. Broker SDKs
 # stay optional, see the extras below.
+# ! upper bounds are deliberate. This package reaches into pydantic's
+# ConfigDict internals and both broker SDKs' undocumented response
+# shapes, so a major release is a breaking change for us even when it is
+# not for them
 dependencies = [
-    "pydantic>=2.7",
-    "pydantic-settings>=2.2"
+    "pydantic>=2.7,<3",
+    "pydantic-settings>=2.2,<3"
 ]
 
 [project.optional-dependencies]
 # ! install only the broker(s) actually in use, the registry raises
 # BrokerConfigurationError naming the missing extra at lookup time
-fyers = ["fyers-apiv3>=3.1.7"]
-kite = ["kiteconnect>=5.0.1"]
+fyers = ["fyers-apiv3>=3.1.7,<4"]
+kite = ["kiteconnect>=5.0.1,<6"]
 
 # ? mounting the bundled APIRouter is opt-in, the library core never
 # imports fastapi and works fine as a plain importable package
-server = ["fastapi>=0.110"]
+server = ["fastapi>=0.110,<1"]
 
 test = [
     "pytest>=8.0",

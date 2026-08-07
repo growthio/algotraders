@@ -212,6 +212,40 @@ def noNetwork(
     monkeypatch.setattr(socket.socket, "connect", blockedConnect)
     monkeypatch.setattr(socket.socket, "connect_ex", blockedConnectEx)
 
+    # ! socket.connect is not the only door. On Windows the Proactor
+    # loop reaches the network through ConnectEx, so an async HTTP
+    # client bypassed the guard entirely and the suite had no network
+    # block at all on this platform
+    import asyncio
+
+    originalCreateConnection = asyncio.BaseEventLoop.create_connection
+    originalSockConnect = asyncio.BaseEventLoop.sock_connect
+
+    async def blockedCreateConnection(
+        self : Any, *args : Any, **kwargs : Any
+    ) -> Any:
+        host = kwargs.get("host") or (args[1] if len(args) > 1 else None)
+
+        if host in LOOPBACK_HOSTS or host is None:
+            return await originalCreateConnection(self, *args, **kwargs)
+
+        raise RuntimeError(f"{BLOCKED_NETWORK_MESSAGE} (target: {host})")
+
+    async def blockedSockConnect(
+        self : Any, sock : Any, address : Any
+    ) -> Any:
+        if isLoopback(address):
+            return await originalSockConnect(self, sock, address)
+
+        raise RuntimeError(f"{BLOCKED_NETWORK_MESSAGE} (target: {address})")
+
+    monkeypatch.setattr(
+        asyncio.BaseEventLoop, "create_connection", blockedCreateConnection
+    )
+    monkeypatch.setattr(
+        asyncio.BaseEventLoop, "sock_connect", blockedSockConnect
+    )
+
 
 @pytest.fixture(autouse = True)
 def dummyEnvironment(

@@ -266,17 +266,38 @@ class StubStream:
     """
     Placeholder streaming surface.
 
-    Registered so the registry entry carries a ``STREAM`` the way a real
-    broker does. Nothing in ``initialize`` builds it yet - reaching a
-    stream from the public API is still an open gap.
+    Carries ``accessToken`` because both real streams do: a websocket
+    authenticates with the raw token rather than the vendor client
+    object, so a token refresh has to reach it separately. A fake
+    without that field cannot catch a rebind that misses it.
     """
 
     def __init__(
         self, sessionManager : Any = None, sink : Any = None,
         clock : Optional[BaseClock] = None, resolver : Any = None,
-        **extra : Any
+        accessToken : str = "", **extra : Any
     ) -> None:
         self.sessionManager = sessionManager
         self.sink = sink
         self.clock = clock
         self.resolver = resolver
+        self.accessToken = accessToken
+
+        self.started = False
+        self.stopped = False
+
+
+    async def start(self) -> None:
+        """
+        Record that the stream was asked to connect.
+        """
+
+        self.started = True
+
+
+    async def stop(self) -> None:
+        """
+        Record that the stream was shut down.
+        """
+
+        self.stopped = True

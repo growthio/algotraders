@@ -236,7 +236,13 @@ def toPriceRow(candle : Any) -> Dict[str, Any]:
     :returns: A row ready for an insert.
     """
 
-    record = candle.toRecord()
+    # ! model_dump in PYTHON mode, not json. toRecord() serialises for
+    # JSON, so effective_time arrives as an ISO string and asyncpg
+    # rejects it for a timestamptz column - every ingest would 500. The
+    # column names are the same either way
+    record = candle.model_dump(by_alias = True)
+
+    record["timeframe"] = candle.timeframe.value
 
     return {
         "exchange_symbol_ext" : record.pop("instrument_key"),

@@ -23,8 +23,12 @@ jobs:
           python -m pip install build
           python -m build
 
+      # ! must match the download-artifact major below. v4 changed the
+      # artifact format, so a v7 upload paired with a v8 download fails
+      # to resolve the artifact at publish time - after the build has
+      # already succeeded, which is the worst place to find out
       - name: Upload Distributions
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v8
         with:
           name: release-dists
           path: dist/
@@ -47,6 +51,11 @@ jobs:
           name: release-dists
           path: dist/
 
+      # ! TODO(security): pin this to a commit SHA rather than a branch.
+      # `release/v1` is a MUTABLE branch reference, and this job holds
+      # `id-token: write` - whoever controls that branch can mint a
+      # trusted-publishing token for this project. Every other action
+      # here is at least on an immutable tag
       - name: Publish Release Distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:

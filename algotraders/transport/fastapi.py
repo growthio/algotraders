@@ -30,15 +30,18 @@ a URL.
 
 import datetime as dt
 
-from typing import Any, Awaitable, Callable, List, Optional, Sequence
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence
+
+from pydantic import Field, model_validator
 
 from algotraders.auth.state import (
     BaseLoginStateStore, MemoryLoginStateStore
 )
 from algotraders.errors import (
     AlgoTradersError, AuthorizationRequired, DataSubscriptionRequired,
-    InstrumentNotFound, InvalidLoginState, InvalidOrder, MissingDependency,
-    OrderRejected, RateLimitExceeded, TokenExpiredError, UnsupportedTimeframe
+    InstrumentNotFound, InvalidInstrumentKey, InvalidLoginState, InvalidOrder,
+    MissingDependency, OrderRejected, RateLimitExceeded, TokenExpiredError,
+    UnsupportedTimeframe
 )
 from algotraders.logger import getLogger
 from algotraders.models.auth import LoginChallenge, SessionStatus
@@ -50,6 +53,21 @@ from algotraders.models.orders import OrderRequest, OrderResponse
 from algotraders.models.portfolio import Holding, Position
 
 logger = getLogger(__name__)
+
+# ? the widest window an HTTP caller may request per timeframe. Chosen
+# so any single request stays within a few hundred broker calls even at
+# the tightest chunk span, which is what keeps one endpoint from
+# spending an account's whole daily quota
+MAXIMUM_SPAN : Dict[Timeframe, dt.timedelta] = {
+    Timeframe.MINUTE_1  : dt.timedelta(days = 366),
+    Timeframe.MINUTE_3  : dt.timedelta(days = 366 * 2),
+    Timeframe.MINUTE_5  : dt.timedelta(days = 366 * 3),
+    Timeframe.MINUTE_15 : dt.timedelta(days = 366 * 5),
+    Timeframe.HOUR_1    : dt.timedelta(days = 366 * 10),
+    Timeframe.DAY_1     : dt.timedelta(days = 366 * 25),
+    Timeframe.MONTH_1   : dt.timedelta(days = 366 * 25),
+    Timeframe.YEAR_1    : dt.timedelta(days = 366 * 25)
+}
 
 try:
     from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -70,11 +88,40 @@ class CandleRequest(AlgoTradersModel):
         does not serve. Defaults to refusing, matching the library.
     """
 
-    instrumentKeys : List[str]
+    # ! bounded. Unbounded, one request for 5,000 keys over sixteen
+    # years of one minute data expands to roughly 290,000 rate limited
+    # vendor calls: it pins a worker for hours and exhausts the daily
+    # quota for the whole account, from a single HTTP request
+    instrumentKeys : List[str] = Field(min_length = 1, max_length = 50)
     timeframe : Timeframe
     start : dt.datetime
     end : dt.datetime
     allowAggregation : bool = False
+
+
+    @model_validator(mode = "after")
+    def validateSpan(self) -> "CandleRequest":
+        """
+        Refuse a range that would fan out into an unreasonable number of
+        broker calls.
+
+        :raises ValueError: The requested window is too wide for the
+            timeframe.
+        """
+
+        if self.end < self.start:
+            raise ValueError("end must not precede start")
+
+        span = self.end - self.start
+        allowed = MAXIMUM_SPAN.get(self.timeframe, dt.timedelta(days = 3_650))
+
+        if span > allowed:
+            raise ValueError(
+                f"a {self.timeframe.value} request may span at most "
+                f"{allowed.days} days, asked for {span.days}"
+            )
+
+        return self
 
 
 class QuoteRequest(AlgoTradersModel):
@@ -82,7 +129,7 @@ class QuoteRequest(AlgoTradersModel):
     Body for a quote request.
     """
 
-    instrumentKeys : List[str]
+    instrumentKeys : List[str] = Field(min_length = 1, max_length = 200)
 
 
 class CallbackRequest(AlgoTradersModel):
@@ -541,18 +588,33 @@ def installExceptionHandlers(app : Any) -> None:
             }
         )
 
+    @app.exception_handler(InvalidInstrumentKey)
+    async def onInvalidInstrumentKey(
+        request : Any, error : InvalidInstrumentKey
+    ) -> Any:
+        # ? malformed rather than merely unknown, so 400 not 404
+        return JSONResponse(
+            status_code = status.HTTP_400_BAD_REQUEST,
+            content = {"detail" : str(error)}
+        )
+
     @app.exception_handler(AlgoTradersError)
     async def onLibraryError(request : Any, error : AlgoTradersError) -> Any:
-        # ! last resort. The message is returned because these are
-        # operator facing errors carrying no credential material, which
-        # the redacting logger and SecretStr models both guarantee
+        # ! last resort, and deliberately opaque to the client. These
+        # messages carry operator detail that has no business crossing
+        # the boundary: InvalidCredentials names environment variables,
+        # BrokerError interpolates absolute site-packages paths. The
+        # detail is logged, where the redacting filter can reach it
         logger.warning(
-            "unhandled library error: %s", type(error).__name__
+            "unhandled library error: %s: %s", type(error).__name__, error
         )
 
         return JSONResponse(
             status_code = status.HTTP_502_BAD_GATEWAY,
-            content = {"detail" : str(error)}
+            content = {
+                "detail" : "the broker request could not be completed",
+                "type" : type(error).__name__
+            }
         )
 
 

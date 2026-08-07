@@ -37,6 +37,7 @@ function.
     its test suite, and it needs sqlalchemy, asyncpg and a database.
 """
 
+import asyncio
 import datetime as dt
 
 from typing import Any, Dict, List, Optional
@@ -108,6 +109,12 @@ async def getDatabase() -> AsyncSession:
         yield session
 
 
+# ! guards the lazy build. Without it a cold start under concurrent
+# requests awaits inside the check-then-assign window, so N requests each
+# build a session and leak N-1 thread pools
+_sessionLock = asyncio.Lock()
+
+
 async def getSession() -> BrokerSession:
     """
     Return the broker session, creating it on first use.
@@ -119,10 +126,16 @@ async def getSession() -> BrokerSession:
 
     global _session
 
-    if _session is None or not _session.isAuthenticated:
-        _session = await algotraders.initialize(
-            broker = "fyers", maxConcurrency = 5
-        )
+    if _session is not None and _session.isAuthenticated:
+        return _session
+
+    async with _sessionLock:
+        # ? re-checked inside the lock: another request may have built
+        # it while this one was waiting
+        if _session is None or not _session.isAuthenticated:
+            _session = await algotraders.initialize(
+                broker = "fyers", maxConcurrency = 5
+            )
 
     return _session
 
